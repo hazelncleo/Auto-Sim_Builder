@@ -52,6 +52,9 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Claude drivel
+CLAUDE.md
+
 # Translations
 *.mo
 *.pot
