@@ -11,6 +11,13 @@ dependencies = [
     "textual-dev>=1.8.0",
 ]
 
+[project.scripts]
+autosim = "auto_sim_builder.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.10,<0.11"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
