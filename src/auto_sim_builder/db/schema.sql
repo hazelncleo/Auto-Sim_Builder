@@ -17,7 +17,7 @@ CREATE TABLE software (
 CREATE TABLE objects (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE
-                CHECK (name <> '' AND name NOT IN ('.', '..') AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
+                CHECK (name GLOB '[A-Za-z0-9]*' AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
     description TEXT,
     kind        TEXT NOT NULL CHECK (kind IN ('analysis', 'geometry'))
 ) STRICT;
@@ -72,7 +72,7 @@ CREATE TABLE parameter_choices (
 CREATE TABLE models (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE
-                CHECK (name <> '' AND name NOT IN ('.', '..') AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
+                CHECK (name GLOB '[A-Za-z0-9]*' AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
     description  TEXT,
     analysis_id  INTEGER NOT NULL REFERENCES objects(id),
     build_status TEXT CHECK (build_status IN ('success', 'failed')),  -- NULL = not built yet

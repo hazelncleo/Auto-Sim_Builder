@@ -26,7 +26,7 @@ Running `autosim` in a folder (or `autosim -f <dir>`) makes it a project:
 ```
 
 - `objects/` and `models/` always match the database. Deleted folders go to `.trash/`, never stay behind.
-- Object and model names double as folder names: letters, digits, `_`, `.`, `-` only.
+- Object and model names double as folder names: letters, digits, `_`, `.`, `-` only, and they must start with a letter or digit (so no hidden `.name` folders or `-name` shell-option lookalikes).
 
 ## Startup
 

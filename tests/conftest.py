@@ -1,6 +1,3 @@
-# TODO: add_object(db, name, kind) helper that inserts a minimal valid object,
-# for the foreign key and cascade tests in test_schema.py.
-
 import pytest
 
 from auto_sim_builder.db import connect
