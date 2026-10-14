@@ -2,7 +2,7 @@
 
 ## Overview
 - **Objects** are either an `analysis` or a `geometry`. Each has a unique name, a description, files, and parameters. An object's files are copied into `objects/<name>/` in the project folder.
-- **Software** is a fixed catalogue of build targets defined in code (`abaqus_input`, `abaqus_python`, `fluent_python`, `mpcci_python`). Each project picks which ones it uses and can optionally override the command for each one, e.g. `abq2024`.
+- **Software** is a fixed catalogue of programs defined in code (`abaqus`, `fluent`, `mpcci`). How a build file is built depends on its software and file type, and is handled in code, not the database. For example, an Abaqus `.py` is run with Python, while an Abaqus `.inp` gets a `*PARAMETER` block added. Each project picks which ones it uses and can optionally override the command for each one, e.g. `abq2024`.
 - **Object software:** an object uses one or more of the project's software. Each can have its own build file, and every object needs at least one build file. All of an object's parameters are passed to every build; build order doesn't matter.
 - **Parameters** belong to an object and record what values they can take.
 - **Models** combine exactly one analysis with any number of geometries (zero or more). A model stores its own parameter values, which override the object defaults. Creating a model copies its objects' files into `models/<name>/`.
@@ -22,16 +22,22 @@
 All bounds are inclusive.
 
 ## Tables
+`src/auto_sim_builder/db/schema.sql` contains these tables:
+- **No PRAGMA:** `foreign_keys` is per connection, so `connect()` sets it.
+- **One transaction:** wrapped in `BEGIN; … COMMIT;`, so a failure never leaves half a schema.
+- **Version stamp:** ends with `PRAGMA user_version = 1;`, so `connect()` can tell a new file (`0`) from a ready one (`1`) or one that needs migrating (anything else).
+- **`STRICT` tables:** column types are enforced (needs SQLite ≥ 3.37). Values that convert without loss are converted (`'12'` → `12`, `42` → `'42'`); anything else is rejected, e.g. `'abc'` in an `INTEGER` column.
+
 ```sql
-PRAGMA foreign_keys = ON;   -- must be set on every connection
+-- PRAGMA foreign_keys = ON is set by connect() on every connection, not here.
 
 -- The software this project uses, chosen from the catalogue in code.
 -- Keys can't be renamed; they can be added at any time and deleted while unused.
 CREATE TABLE software (
     id      INTEGER PRIMARY KEY,
-    key     TEXT NOT NULL UNIQUE,   -- catalogue key, e.g. 'abaqus_python'
+    key     TEXT NOT NULL UNIQUE,   -- catalogue key, e.g. 'abaqus'
     command TEXT                    -- e.g. 'abq2024'; NULL = use the config, then the catalogue default
-);
+) STRICT;
 
 -- name doubles as the folder name objects/<name>/, so it must be filesystem-safe
 CREATE TABLE objects (
@@ -40,7 +46,7 @@ CREATE TABLE objects (
                 CHECK (name <> '' AND name NOT IN ('.', '..') AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
     description TEXT,
     kind        TEXT NOT NULL CHECK (kind IN ('analysis', 'geometry'))
-);
+) STRICT;
 
 CREATE TABLE object_files (
     id          INTEGER PRIMARY KEY,
@@ -51,7 +57,7 @@ CREATE TABLE object_files (
     sha256      TEXT    NOT NULL,
     imported_at TEXT    NOT NULL,         -- ISO 8601 timestamp
     UNIQUE (object_id, rel_path)
-);
+) STRICT;
 
 -- Which software an object uses, and the build file for each (optional per software).
 CREATE TABLE object_software (
@@ -60,7 +66,7 @@ CREATE TABLE object_software (
     build_file_id INTEGER REFERENCES object_files(id),   -- NULL = no build step for this software
     PRIMARY KEY (object_id, software_id),
     UNIQUE (build_file_id)                               -- a file builds at most one software
-);
+) STRICT;
 
 CREATE TABLE object_parameters (
     id            INTEGER PRIMARY KEY,
@@ -78,13 +84,13 @@ CREATE TABLE object_parameters (
         (min_value IS NULL OR (min_value >= 0 AND min_value = CAST(min_value AS INTEGER))) AND
         (max_value IS NULL OR (max_value >= 0 AND max_value = CAST(max_value AS INTEGER)))
     ))
-);
+) STRICT;
 
 CREATE TABLE parameter_choices (
     parameter_id INTEGER NOT NULL REFERENCES object_parameters(id) ON DELETE CASCADE,
     value        TEXT NOT NULL,
     PRIMARY KEY (parameter_id, value)
-);
+) STRICT;
 
 -- Objects used by a model can't be deleted while the model exists (default FK behaviour).
 -- Insert a model's geometries in the same transaction that creates the model.
@@ -98,20 +104,20 @@ CREATE TABLE models (
     build_status TEXT CHECK (build_status IN ('success', 'failed')),  -- NULL = not built yet
     built_at     TEXT,                    -- ISO 8601 timestamp of the last build
     CHECK ((build_status IS NULL) = (built_at IS NULL))
-);
+) STRICT;
 
 CREATE TABLE model_geometries (
     model_id    INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     geometry_id INTEGER NOT NULL REFERENCES objects(id),
     PRIMARY KEY (model_id, geometry_id)
-);
+) STRICT;
 
 CREATE TABLE model_parameter_values (
     model_id     INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     parameter_id INTEGER NOT NULL REFERENCES object_parameters(id) ON DELETE CASCADE,
     value        TEXT NOT NULL,
     PRIMARY KEY (model_id, parameter_id)
-);
+) STRICT;
 ```
 
 ## Database vs code
@@ -128,7 +134,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 - **One transaction:** create each object together with its files, software and build files, and each model together with its geometries and values.
 - **Object completeness:** every object has at least one software and at least one build file.
 - **Software keys:** `software.key` must be a key from the catalogue in code.
-- **Build files:** a build file must be one of the same object's files, and its type must suit its software (`.inp` for `abaqus_input`, `.py` for the `*_python` keys).
+- **Build files:** a build file must be one of the same object's files, and its file type must be one its software accepts (Abaqus: `.py` or `.inp`). The build mode comes from the file type.
 - **Model objects:** `models.analysis_id` must be an `analysis` object, and every geometry link must point to a `geometry` object.
 - **Parameter name clashes:** parameter names must be unique across a model's analysis and geometries. Refuse to create the model otherwise.
 
@@ -152,10 +158,11 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 
 ### Connections and config
 - **Foreign keys:** run `PRAGMA foreign_keys = ON` on every connection; the foreign keys and cascades depend on it.
-- **Schema versioning:** optionally use `PRAGMA user_version` to track the schema version for future migrations.
+- **Applying the schema:** `connect()` reads `schema.sql` with `importlib.resources`, i.e. `files("auto_sim_builder.db").joinpath("schema.sql").read_text()`, never a bare `open("schema.sql")`, which would look in the user's project folder. It runs the file with `executescript()` when `PRAGMA user_version` is `0`.
+- **Schema versioning:** `user_version = 1` means the schema is ready. Any other value means the database needs migrating.
 - **Command lookup:** use `software.command`, then the config, then the catalogue default.
 
 ## Open questions (pending Abaqus testing)
 - **Build interpreter:** whether Python build scripts run inside Abaqus (`abaqus cae noGUI=...`) and how parameters are passed in.
 - **Models with several objects:** which objects need a build file, the build order, and how to handle files with the same name when several objects are copied into one `models/<name>/` folder.
-- **Fluent / MPCCI:** how `fluent_python` and `mpcci_python` builds are launched and receive their parameters.
+- **Fluent / MPCCI:** how Fluent and MPCCI builds are launched and receive their parameters.

@@ -40,8 +40,7 @@ Running `autosim` in a folder (or `autosim -f <dir>`) makes it a project:
    │   autosim.db   objects/   models/   .trash/            │
    │                                                        │
    │ Software used in this project:                         │
-   │   [x] abaqus_input       [x] abaqus_python             │
-   │   [ ] fluent_python      [ ] mpcci_python              │
+   │   [x] abaqus      [ ] fluent      [ ] mpcci            │
    │                                                        │
    │          [ Cancel ]          [ Create project ]        │
    └────────────────────────────────────────────────────────┘
@@ -66,7 +65,7 @@ ignore = [
     "*.trn", "*.out",                                # Fluent run leftovers
 ]
 
-[software.abaqus_python]
+[software.abaqus]
 command = "abq2024"           # project database override wins over this
 ```
 
@@ -84,10 +83,10 @@ Three tabs. Each has a list on the left and details on the right.
 ├─────────────────────────┬────────────────────────────────────────────┤
 │ / filter                │ plate_with_hole                 geometry   │
 │                         │ Parametric plate with a central hole       │
-│ ANALYSES                │ Software  abaqus_python                    │
+│ ANALYSES                │ Software  abaqus                           │
 │   static_load        ●  │                                            │
 │   fsi_coupled           │ ┌ Files ──────────────────── 3 · 41 MB ──┐ │
-│ GEOMETRIES              │ │ ★ build_plate.py   abaqus_python  4 KB │ │
+│ GEOMETRIES              │ │ ★ build_plate.py   abaqus         4 KB │ │
 │ > plate_with_hole       │ │   mesh.msh                       41 MB │ │
 │   bracket               │ │   materials.inp                   2 KB │ │
 │                         │ └────────────────────────────────────────┘ │
@@ -184,7 +183,7 @@ Everything structural is chosen here and locked once the object is saved.
 **Step 3: import checklist**
 ```
 ┌ Add files · plate_with_hole ── from ~/sims/plate_src ────────────────┐
-│ [x] build_plate.py                     4 KB   ★ abaqus_python        │
+│ [x] build_plate.py                     4 KB   ★ abaqus (python)      │
 │ [x] materials.inp                      2 KB                          │
 │ [x] mesh.msh                          41 MB                          │
 │ [ ] abaqus.rpy                         1 KB   ignored (*.rpy)        │
@@ -198,7 +197,7 @@ Everything structural is chosen here and locked once the object is saved.
 - Files matching ignore patterns start unticked but can be ticked.
 - Files over the per-file limit can't be ticked. The message names the setting to raise.
 - The running total counts against the per-object limit. Going over it blocks the step.
-- `b` on a ticked file assigns it as the build file for one of the object's software. The file type must match the software (`.inp` for `abaqus_input`, `.py` for `*_python`).
+- `b` on a ticked file assigns it as the build file for one of the object's software. The file type must be one that software accepts. Abaqus takes `.py` (built with Python) or `.inp` (a `*PARAMETER` block is added), and the marker shows which, e.g. `★ abaqus (python)` / `★ abaqus (input)`.
 - Files are imported only once, so there are no name clashes.
 
 **Step 4: parameter dialog** (opened with `a` / `e` on a parameter row)
@@ -310,19 +309,19 @@ Removes the model from the database. The folder goes to **trash** (default) or i
 ┌ autosim · ~/Documents/simulations/project ───────────────────────────┐
 │  1 Objects    2 Models   [3 Software]                                │
 ├─────────────────────────┬────────────────────────────────────────────┤
-│ / filter                │ abaqus_python                              │
-│                         │ Build: build(params) via Abaqus scripting  │
-│ > abaqus_python         │                                            │
-│   abaqus_input          │ Command   abq2024           ✓ found        │
-│   fluent_python         │           (project override)               │
-│   mpcci_python          │                                            │
+│ / filter                │ abaqus                                     │
+│                         │ Build: .py → build(params) via scripting   │
+│ > abaqus                │        .inp → *PARAMETER block added       │
+│   fluent                │ Command   abq2024           ✓ found        │
+│   mpcci                 │           (project override)               │
+│                         │                                            │
 │                         │ Used by   plate_with_hole, fsi_coupled     │
 ├─────────────────────────┴────────────────────────────────────────────┤
 │ a add  e edit command  d delete  f find  q quit                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The catalogue** is defined in code: `abaqus_input`, `abaqus_python`, `fluent_python`, `mpcci_python`. Names can't be edited.
+- **The catalogue** is defined in code: one entry per program (`abaqus`, `fluent`, `mpcci`). Names can't be edited. Each software's build setup is written separately in code, including which build file types it accepts and how each type is built.
 - `a` adds an entry from the catalogue that the project isn't using yet.
 - `e` edits the project's command override; leave it blank to fall back.
 - `d` deletes; blocked while any object uses it.
@@ -346,7 +345,7 @@ autosim [-f DIR] rebuild <model>  rebuild from the shell
 ## Open questions
 
 - **Builds (pending Abaqus testing):**
-  - how `*_python` builds are launched (e.g. `abaqus cae noGUI=...` with a wrapper that calls `build(params)`);
+  - how Python (`.py`) builds are launched (e.g. `abaqus cae noGUI=...` with a wrapper that calls `build(params)`);
   - how parameters are passed in;
   - the same for Fluent and MPCCI.
 - **File clashes in model folders:** two objects in one model with a file of the same name (e.g. both have `build.py`). Detect it at model creation, or use per-object subfolders if the software allows it.
