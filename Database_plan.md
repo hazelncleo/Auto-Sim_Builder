@@ -6,8 +6,8 @@
 - **Object software:** an object uses one or more of the project's software. Each can have its own build file, and every object needs at least one build file. All of an object's parameters are passed to every build; build order doesn't matter.
 - **Parameters** belong to an object and record what values they can take.
 - **Models** combine exactly one analysis with any number of geometries (zero or more). A model stores its own parameter values, which override the object defaults. Creating a model copies its objects' files into `models/<name>/`.
-- **Fixed once created:**
-  - **Objects:** only `name` and `description` can be changed. Kind, files, software and build files, parameters and choices are locked. The one exception is the file snapshot (`size_bytes`/`mtime_ns`/`sha256`), which "Verify OK" may refresh. To change an object, clone it into a new one.
+- **Fixed once created** (enforced in `core/`, see below):
+  - **Objects:** `name` and `description` can always be changed. **Parameters** (and their choices) can be added, edited, cloned and deleted **until the object is used by a model**, then they lock. They unlock again if every model using the object is deleted. Kind, files, software and build files are always locked. The one exception is the file snapshot (`size_bytes`/`mtime_ns`/`sha256`), which "Verify OK" may refresh. For any other change, clone the object into a new one.
   - **Models:** `name`, `description`, the build status and the parameter values can be changed. The analysis and geometries are locked.
 
 ## Parameter ranges
@@ -114,111 +114,46 @@ CREATE TABLE model_parameter_values (
 );
 ```
 
-## Integrity triggers
-These enforce rules that foreign keys can't express.
+## Database vs code
+The database only checks the **shape** of the data: keys, foreign keys, `NOT NULL`, `UNIQUE` and `CHECK`s. There are **no triggers**. Every rule about **what is allowed when** lives in `core/`. `core/` is the only code that writes to the database: the interface and the helper commands both go through it. The interface also uses these checks to explain why an action isn't available *before* the user tries it.
 
-```sql
--- models.analysis_id must point to an analysis
-CREATE TRIGGER models_analysis_kind BEFORE INSERT ON models
-WHEN (SELECT kind FROM objects WHERE id = NEW.analysis_id) IS NOT 'analysis'
-BEGIN SELECT RAISE(ABORT, 'models.analysis_id must reference an analysis object'); END;
+**What the database still guarantees by itself**
+- **Foreign keys:** an object can't be deleted while a model uses it, and software can't be deleted while an object uses it.
+- **Cascades:** deleting an object removes its files, software links, parameters and choices. Deleting a model removes its geometry links and values.
+- **Keys and checks:** unique names, filesystem-safe names, valid `kind`/`type`/`build_status`, consistent parameter ranges, and `build_status`/`built_at` set together.
 
--- model_geometries.geometry_id must point to a geometry
-CREATE TRIGGER model_geometries_kind BEFORE INSERT ON model_geometries
-WHEN (SELECT kind FROM objects WHERE id = NEW.geometry_id) IS NOT 'geometry'
-BEGIN SELECT RAISE(ABORT, 'model_geometries.geometry_id must reference a geometry object'); END;
+## Rules enforced in `core/`
 
--- A build file must be one of the same object's files
-CREATE TRIGGER object_software_build_file_owner BEFORE INSERT ON object_software
-WHEN NEW.build_file_id IS NOT NULL
- AND (SELECT object_id FROM object_files WHERE id = NEW.build_file_id) IS NOT NEW.object_id
-BEGIN SELECT RAISE(ABORT, 'build file must belong to the same object'); END;
+### Creating
+- **One transaction:** create each object together with its files, software and build files, and each model together with its geometries and values.
+- **Object completeness:** every object has at least one software and at least one build file.
+- **Software keys:** `software.key` must be a key from the catalogue in code.
+- **Build files:** a build file must be one of the same object's files, and its type must suit its software (`.inp` for `abaqus_input`, `.py` for the `*_python` keys).
+- **Model objects:** `models.analysis_id` must be an `analysis` object, and every geometry link must point to a `geometry` object.
+- **Parameter name clashes:** parameter names must be unique across a model's analysis and geometries. Refuse to create the model otherwise.
 
--- A model's parameter value must belong to its analysis or to one of its geometries
-CREATE TRIGGER model_parameter_values_owner BEFORE INSERT ON model_parameter_values
-WHEN NOT EXISTS (
-    SELECT 1 FROM object_parameters p JOIN models m ON m.id = NEW.model_id
-    WHERE p.id = NEW.parameter_id
-      AND (p.object_id = m.analysis_id
-           OR p.object_id IN (SELECT geometry_id FROM model_geometries WHERE model_id = NEW.model_id))
-)
-BEGIN SELECT RAISE(ABORT, 'parameter does not belong to an object in this model'); END;
+### Locks
+- **Objects:** only `name` and `description` change. Kind, files, software and build files never change, and no files or software are added after creation. The one exception is "Verify OK", which may refresh a file's snapshot (`size_bytes`/`mtime_ns`/`sha256`).
+- **Parameters and choices:** they can be added, edited, cloned and deleted only while the object is **unused**, meaning it isn't any model's analysis or geometry. They lock again as soon as a model uses the object.
+- **Choices:** only `choice` parameters have choices. Delete a parameter's choices before changing its type away from `choice`.
+- **Models:** only `name`, `description`, the build status and the values change. Geometries can't be added or removed after creation.
+- **Parameter values:** a value's parameter must belong to one of the model's objects. Only the `value` column is ever updated.
 
--- ---------------------------------------------------------------------------
--- Objects are locked after creation: only name and description can change.
--- "Delete" triggers only fire while the parent still exists, so deleting a
--- whole object still cascades normally.
--- ---------------------------------------------------------------------------
-CREATE TRIGGER objects_locked BEFORE UPDATE ON objects
-WHEN NEW.id IS NOT OLD.id OR NEW.kind IS NOT OLD.kind
-BEGIN SELECT RAISE(ABORT, 'only an object''s name and description can be changed'); END;
+### Values
+- **Validation:** whenever a value is written to `model_parameter_values` or set as `default_value`, check it against the parameter's `type`, `min_value`/`max_value` (numeric bound or string length) and `parameter_choices`.
+- **Editing parameters:** when a parameter's type, range or choices change, re-check its `default_value` against them.
 
--- Only the snapshot columns may be refreshed (by "Verify OK")
-CREATE TRIGGER object_files_locked BEFORE UPDATE ON object_files
-WHEN NEW.id IS NOT OLD.id OR NEW.object_id IS NOT OLD.object_id
-  OR NEW.rel_path IS NOT OLD.rel_path OR NEW.imported_at IS NOT OLD.imported_at
-BEGIN SELECT RAISE(ABORT, 'object files are locked; only the snapshot can be refreshed'); END;
-
-CREATE TRIGGER object_files_no_remove BEFORE DELETE ON object_files
-WHEN EXISTS (SELECT 1 FROM objects WHERE id = OLD.object_id)
-BEGIN SELECT RAISE(ABORT, 'object files are locked'); END;
-
-CREATE TRIGGER object_parameters_locked BEFORE UPDATE ON object_parameters
-BEGIN SELECT RAISE(ABORT, 'object parameters are locked'); END;
-
-CREATE TRIGGER object_parameters_no_remove BEFORE DELETE ON object_parameters
-WHEN EXISTS (SELECT 1 FROM objects WHERE id = OLD.object_id)
-BEGIN SELECT RAISE(ABORT, 'object parameters are locked'); END;
-
-CREATE TRIGGER parameter_choices_locked BEFORE UPDATE ON parameter_choices
-BEGIN SELECT RAISE(ABORT, 'parameter choices are locked'); END;
-
-CREATE TRIGGER parameter_choices_no_remove BEFORE DELETE ON parameter_choices
-WHEN EXISTS (SELECT 1 FROM object_parameters WHERE id = OLD.parameter_id)
-BEGIN SELECT RAISE(ABORT, 'parameter choices are locked'); END;
-
-CREATE TRIGGER object_software_locked BEFORE UPDATE ON object_software
-BEGIN SELECT RAISE(ABORT, 'object software and build files are locked'); END;
-
-CREATE TRIGGER object_software_no_remove BEFORE DELETE ON object_software
-WHEN EXISTS (SELECT 1 FROM objects WHERE id = OLD.object_id)
-BEGIN SELECT RAISE(ABORT, 'object software and build files are locked'); END;
-
--- ---------------------------------------------------------------------------
--- Models can't change their objects.
--- (A value's model_id / parameter_id are locked too, so only `value` can be edited.)
--- ---------------------------------------------------------------------------
-CREATE TRIGGER models_locked BEFORE UPDATE ON models
-WHEN NEW.id IS NOT OLD.id OR NEW.analysis_id IS NOT OLD.analysis_id
-BEGIN SELECT RAISE(ABORT, 'a model''s analysis cannot be changed'); END;
-
-CREATE TRIGGER model_geometries_immutable BEFORE UPDATE ON model_geometries
-BEGIN SELECT RAISE(ABORT, 'model geometries cannot be changed'); END;
-
--- Removing a geometry is only allowed as part of deleting the whole model
-CREATE TRIGGER model_geometries_no_remove BEFORE DELETE ON model_geometries
-WHEN EXISTS (SELECT 1 FROM models WHERE id = OLD.model_id)
-BEGIN SELECT RAISE(ABORT, 'model geometries cannot be removed'); END;
-
-CREATE TRIGGER model_parameter_values_keys_immutable BEFORE UPDATE OF model_id, parameter_id ON model_parameter_values
-WHEN NEW.model_id IS NOT OLD.model_id OR NEW.parameter_id IS NOT OLD.parameter_id
-BEGIN SELECT RAISE(ABORT, 'only model_parameter_values.value can be changed'); END;
-```
-
-## Left to application code
-- **Value validation:** when a value is written to `model_parameter_values` (or used as `default_value`), check it against the parameter's `type`, its `min_value`/`max_value` (numeric bound or string length), and `parameter_choices`. Doing this in Python gives clearer errors than SQL triggers would.
-- **No additions after creation:** the database blocks changing or removing locked rows, but it can't tell creation apart from later, so it still allows *adding* rows. The code must create each object (with its files, software and build files, parameters and choices) and each model (with its geometries) in a single transaction, and refuse to add any of these afterwards.
-- **Parameter name clashes:** when a model is created, the parameter names across its analysis and geometries must be unique. Refuse to create the model if two of its objects share a parameter name.
-- **Software catalogue:** `software.key` must be a key from the catalogue in code. The catalogue also defines each key's build mode, build file type (`.inp` for `abaqus_input`, `.py` for the `*_python` keys) and default command. The code checks that each build file has the right type for its software.
-- **Command lookup:** use `software.command`, then the config, then the catalogue default.
-- **Every object needs at least one software and at least one build file.** SQLite can't check this at the end of a transaction, so the code must check it when creating the object.
+### Files and folders
 - **Edit detection:** before a model is created, cloned or rebuilt, check every listed file of its objects. Compare `size_bytes`/`mtime_ns` first and only re-hash when those differ.
   - **Modified** files must be confirmed with "Verify OK", which overwrites the stored snapshot (there is only ever one snapshot per file).
   - **Missing** files block the build.
   - **Unlisted** files in `objects/<name>/` are ignored: building copies only the files listed in `object_files`.
-- **Renaming:** renaming an object or model must also move its folder (`objects/<name>/` or `models/<name>/`).
-- **Foreign keys:** run `PRAGMA foreign_keys = ON` on every connection.
+- **Renaming:** renaming an object or model also moves its folder (`objects/<name>/` or `models/<name>/`).
+
+### Connections and config
+- **Foreign keys:** run `PRAGMA foreign_keys = ON` on every connection; the foreign keys and cascades depend on it.
 - **Schema versioning:** optionally use `PRAGMA user_version` to track the schema version for future migrations.
+- **Command lookup:** use `software.command`, then the config, then the catalogue default.
 
 ## Open questions (pending Abaqus testing)
 - **Build interpreter:** whether Python build scripts run inside Abaqus (`abaqus cae noGUI=...`) and how parameters are passed in.

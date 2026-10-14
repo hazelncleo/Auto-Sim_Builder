@@ -127,7 +127,7 @@ Arrow keys move; action letters sit near WASD so the left hand covers them. **WA
 | Tab / Shift+Tab | next / previous panel |
 | f | find (filter the list) |
 | q | quit |
-| ? | help |
+| h | help |
 
 **Lists and panels**
 | key | action | where |
@@ -211,10 +211,13 @@ Everything structural is chosen here and locked once the object is saved.
 - The default is checked against the range or choices before saving.
 
 ### Edit (`e`)
-Full-screen editor, but only **name** and **description** can be changed. Files, software, build files and parameters are shown read-only. Renaming moves `objects/<name>/`.
+Full-screen editor:
+- **Name and description:** always editable. Renaming moves `objects/<name>/`.
+- **Parameters:** editable **until a model uses the object**. In the Parameters table, `a` adds, `e` edits, `c` clones (copies a parameter under a new name) and `d` deletes, using the same parameter dialog as the wizard. Once the object is used, the table becomes read-only and its header shows `🔒 used by N models`. It unlocks again if those models are deleted.
+- **Files, software and build files:** always read-only.
 
 ### Clone (`c`)
-Opens the creation wizard pre-filled from the selected object (details, software, source folder, parameters). This is how an object is "changed": by making a new one, e.g. `plate_with_hole_v2`.
+Opens the creation wizard pre-filled from the selected object (details, software, source folder, parameters). This is how an object that's already used by a model is changed, or how its files or software are changed: by making a new one, e.g. `plate_with_hole_v2`.
 
 ### Rescan (`r`)
 Runs the file check on the selected object, comparing size and modification time and only re-hashing when those differ. Results show in the Files panel (✎ modified, ✗ missing). Unlisted files in the object folder are ignored.
