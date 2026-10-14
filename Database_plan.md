@@ -147,6 +147,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 
 ### Values
 - **Validation:** whenever a value is written to `model_parameter_values` or set as `default_value`, check it against the parameter's `type`, `min_value`/`max_value` (numeric bound or string length) and `parameter_choices`.
+- **Bool values:** accept `true`/`false` and `1`/`0`, ignoring case (so `True` and `TRUE` work too). Always store the Python spellings `"True"`/`"False"`. These go into an Abaqus `*PARAMETER` block as they are, and become a Python `bool` in the `params` dict.
 - **Editing parameters:** when a parameter's type, range or choices change, re-check its `default_value` against them.
 
 ### Files and folders
