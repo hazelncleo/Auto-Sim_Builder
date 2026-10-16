@@ -26,6 +26,7 @@ from auto_sim_builder.core.validation import (
     ValidationError,
     validate_description,
     validate_name,
+    validate_parameter_name,
     validate_parameter_range,
     clean_parameter_value,
     clean_choice,
@@ -53,8 +54,10 @@ def test_99_characters_accepted():
     ids=["not-str", "duplicate", "too-long", "empty", "bad-char", "bad-first-char"],
 )
 def test_invalid_name_rejected(name, taken, message):
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=message) as error:
         validate_name(name, taken)
+    if name is not None:
+        assert isinstance(error.value, ValidationError) and error.value.field == "name"
 
 
 def test_valid_description_accepted():
@@ -75,8 +78,10 @@ def test_249_character_description_accepted():
     ids=["not-str", "too-long", "non-printable"],
 )
 def test_invalid_description_rejected(description, message):
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=message) as error:
         validate_description(description)
+    if description is not None:
+        assert isinstance(error.value, ValidationError) and error.value.field == "description"
 
 
 @pytest.mark.parametrize(
@@ -433,4 +438,59 @@ def test_invalid_choice_rejected(choice, current, message):
 def test_non_str_choice_rejected():
     with pytest.raises(ValueError, match="not a string") as error:
         clean_choice(None, set())
+    assert not isinstance(error.value, ValidationError)
+
+
+@pytest.mark.parametrize(
+    "name, taken",
+    [
+        ("width", set()),
+        ("Width", {"height"}),
+        ("plate_width_2", set()),
+        ("x", set()),
+        ("x" * 99, set()),
+        ("Class", set()),
+        ("true", set()),
+        ("match", set()),
+        ("type", set()),
+    ],
+    ids=["plain", "capital", "underscore-digits", "one-letter", "99-characters",
+         "capital-keyword", "lowercase-true", "soft-keyword-match", "soft-keyword-type"],
+)
+def test_valid_parameter_name_accepted(name, taken):
+    validate_parameter_name(name, taken)
+
+
+@pytest.mark.parametrize(
+    "name, taken, message",
+    [
+        ("Width", {"width"}, "already used"),
+        ("x" * 100, set(), "longer than 99"),
+        ("", set(), "empty"),
+        ("plate-width", set(), "restricted characters"),
+        ("plate.width", set(), "restricted characters"),
+        ("plate width", set(), "restricted characters"),
+        ("größe", set(), "restricted characters"),
+        ("2nd_load", set(), "first character '2'"),
+        ("_width", set(), "first character '_'"),
+        ("class", set(), "keyword"),
+        ("lambda", set(), "keyword"),
+        ("True", set(), "keyword"),
+        ("None", set(), "keyword"),
+        ("print", set(), "keyword"),
+        ("exec", set(), "keyword"),
+    ],
+    ids=["duplicate", "too-long", "empty", "hyphen", "period", "space", "non-ascii",
+         "digit-first", "underscore-first", "class", "lambda", "True", "None",
+         "py2-print", "py2-exec"],
+)
+def test_invalid_parameter_name_rejected(name, taken, message):
+    with pytest.raises(ValidationError, match=message) as error:
+        validate_parameter_name(name, taken)
+    assert error.value.field == "name"
+
+
+def test_non_str_parameter_name_rejected():
+    with pytest.raises(ValueError, match="not a string") as error:
+        validate_parameter_name(None, set())
     assert not isinstance(error.value, ValidationError)

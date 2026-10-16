@@ -137,6 +137,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 - **Software keys:** `software.key` must be a key from the catalogue in code.
 - **Build files:** a build file must be one of the same object's files, and its file type must be one its software accepts (Abaqus: `.py` or `.inp`). The build mode comes from the file type.
 - **Model objects:** `models.analysis_id` must be an `analysis` object, and every geometry link must point to a `geometry` object.
+- **Parameter names:** they become Python dict keys and Abaqus `*PARAMETER` names, so they must be identifiers: ASCII letters, digits and `_`, starting with a letter, at most 99 characters. Python 3 keywords and Python 2.7's `print`/`exec` are rejected. They're unique within an object, ignoring case.
 - **Parameter name clashes:** parameter names must be unique across a model's analysis and geometries. Refuse to create the model otherwise.
 
 ### Locks

@@ -1,6 +1,7 @@
 from string import ascii_letters, digits
 from auto_sim_builder.core.params import ParamType
 from math import isfinite
+from keyword import iskeyword
 
 
 class ValidationError(ValueError):
@@ -13,9 +14,7 @@ class ValidationError(ValueError):
 
 ALLOWED_CHARACTERS = set(ascii_letters + digits + '_-.')
 ALLOWED_STARTING_CHARACTERS = set(ascii_letters + digits)
-
-
-# TODO: Validate values against type / range / string length / choices
+ALLOWED_PARAMETER_CHARACTERS = set(ascii_letters + digits + '_')
 
 
 def validate_name(name: str, current_names: set[str]) -> None:
@@ -35,19 +34,19 @@ def validate_name(name: str, current_names: set[str]) -> None:
         raise ValueError(f"'{name}' is not a string")
 
     elif name.casefold() in current_names:
-        raise ValueError(f"'{name}' is already used")
+        raise ValidationError(f"'{name}' is already used", "name")
 
     elif len(name) >= 100:
-        raise ValueError(f"'{name}' is longer than 99 characters")
+        raise ValidationError(f"'{name}' is longer than 99 characters", "name")
 
     elif len(name) == 0:
-        raise ValueError("name cannot be empty")
+        raise ValidationError("name cannot be empty", "name")
 
     elif not set(name) <= ALLOWED_CHARACTERS:
-        raise ValueError(f"'{name}' contains restricted characters")
+        raise ValidationError(f"'{name}' contains restricted characters", "name")
 
     elif name[0] not in ALLOWED_STARTING_CHARACTERS:
-        raise ValueError(f"'{name}' contains restricted first character")
+        raise ValidationError(f"'{name}' contains restricted first character", "name")
 
 
 def validate_description(description: str) -> None:
@@ -62,10 +61,46 @@ def validate_description(description: str) -> None:
         raise ValueError("description is not a string")
 
     elif len(description) >= 250:
-        raise ValueError("description is longer than 249 characters")
+        raise ValidationError("description is longer than 249 characters", "description")
 
     elif not description.isprintable():
-        raise ValueError("description contains non-printable characters")
+        raise ValidationError("description contains non-printable characters", "description")
+
+
+def validate_parameter_name(parameter_name: str, current_parameter_names: set[str]) -> None:
+    """Check parameter name matches the following criteria
+
+    - Is a string
+    - Does not match any current parameter names
+    - Less than 100 characters
+    - Only contains digits, ascii letters and underscores.
+    - Must start with an ascii letter
+    - Cannot be a python keyword ('print' and 'exec' included)
+    - Must not be empty
+
+    NOTE: current_parameter_names should be casefolded
+    """
+
+    if not isinstance(parameter_name, str):
+        raise ValueError(f"'{parameter_name}' is not a string")
+
+    elif parameter_name.casefold() in current_parameter_names:
+        raise ValidationError(f"'{parameter_name}' is already used", "name")
+
+    elif len(parameter_name) >= 100:
+        raise ValidationError(f"'{parameter_name}' is longer than 99 characters", "name")
+
+    elif len(parameter_name) == 0:
+        raise ValidationError("name cannot be empty", "name")
+
+    elif not set(parameter_name) <= ALLOWED_PARAMETER_CHARACTERS:
+        raise ValidationError(f"'{parameter_name}' contains restricted characters", "name")
+
+    elif iskeyword(parameter_name) or parameter_name in ("print","exec"):
+        raise ValidationError(f"'{parameter_name}' is a python keyword", "name")
+
+    elif parameter_name[0] not in ascii_letters:
+        raise ValidationError(f"'{parameter_name}' contains restricted first character '{parameter_name[0]}'", "name")
 
 
 def validate_parameter_range(parameter_type: ParamType, lower_bound: float | None, upper_bound: float | None) -> None:
