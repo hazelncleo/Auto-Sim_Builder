@@ -1,7 +1,18 @@
-import string
+from string import ascii_letters, digits
+from auto_sim_builder.core.params import ParamType
+from math import isfinite
 
-ALLOWED_CHARACTERS = set(string.ascii_letters + string.digits + '_-.')
-ALLOWED_STARTING_CHARACTERS = set(string.ascii_letters + string.digits)
+
+class ValidationError(ValueError):
+    """A validation failure tied to the input field that caused it."""
+
+    def __init__(self, message: str, field: str):
+        super().__init__(message)
+        self.field = field
+
+
+ALLOWED_CHARACTERS = set(ascii_letters + digits + '_-.')
+ALLOWED_STARTING_CHARACTERS = set(ascii_letters + digits)
 
 
 # TODO: Validate values against type / range / string length / choices
@@ -55,3 +66,60 @@ def validate_description(description: str) -> None:
 
     elif not description.isprintable():
         raise ValueError("description contains non-printable characters")
+
+
+def validate_range(ptype: ParamType, lower_bound: float | None, upper_bound: float | None) -> None:
+    """Check range is valid for the given parameter dtype
+
+    BOOL, CHOICE
+    - cannot have bounds
+
+    STR
+    - must either be not set or non-negative integers
+    - lower_bound must be smaller or equal to upper_bound
+
+    INT
+    - must be not set or integers
+    - lower_bound must be smaller or equal to upper_bound
+
+    FLOAT
+    - must be either not set or a finite value
+    - lower_bound must be smaller or equal to upper_bound
+    """
+    match ptype:
+        case ParamType.BOOL | ParamType.CHOICE:
+            if (lower_bound is not None) or (upper_bound is not None):
+                raise ValueError(f"'{ptype}' cannot have bounds")
+
+        case ParamType.STR:
+            if lower_bound is not None:
+                if not lower_bound.is_integer():
+                    raise ValidationError(f"'{lower_bound}' is not an integer", "lower")
+                elif lower_bound < 0:
+                    raise ValidationError(f"'{lower_bound}' is negative", "lower")
+
+            if upper_bound is not None:
+                if not upper_bound.is_integer():
+                    raise ValidationError(f"'{upper_bound}' is not an integer", "upper")
+                elif upper_bound < 0:
+                    raise ValidationError(f"'{upper_bound}' is negative", "upper")
+
+        case ParamType.INT:
+            if (lower_bound is not None) and (not lower_bound.is_integer()):
+                raise ValidationError(f"'{lower_bound}' is not an integer", "lower")
+
+            if (upper_bound is not None) and (not upper_bound.is_integer()):
+                raise ValidationError(f"'{upper_bound}' is not an integer", "upper")
+
+        case ParamType.FLOAT:
+            if (lower_bound is not None) and not isfinite(lower_bound):
+                raise ValidationError(f"'{lower_bound}' is not a finite value", "lower")
+
+            elif (upper_bound is not None) and not isfinite(upper_bound):
+                raise ValidationError(f"'{upper_bound}' is not a finite value", "upper")
+
+        case _:
+            raise ValueError(f"'{ptype}' is not a valid parameter type")
+
+    if (lower_bound is not None) and (upper_bound is not None) and (lower_bound > upper_bound):
+        raise ValidationError(f"'{lower_bound}' is greater than '{upper_bound}'", "upper")
