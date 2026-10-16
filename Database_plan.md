@@ -148,7 +148,11 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 
 ### Values
 - **Validation:** whenever a value is written to `model_parameter_values` or set as `default_value`, check it against the parameter's `type`, `min_value`/`max_value` (numeric bound or string length) and `parameter_choices`.
-- **Bool values:** accept `true`/`false` and `1`/`0`, ignoring case (so `True` and `TRUE` work too). Always store the Python spellings `"True"`/`"False"`. These go into an Abaqus `*PARAMETER` block as they are, and become a Python `bool` in the `params` dict.
+- **Bool values:** accept `true`/`false` and `1`/`0`, ignoring case and surrounding whitespace (so `True`, `TRUE` and `" true "` work too). Always store the Python spellings `"True"`/`"False"`. These go into an Abaqus `*PARAMETER` block as they are, and become a Python `bool` in the `params` dict.
+- **Int values:** ASCII only, then anything Python's `int()` parses (surrounding whitespace, a sign, `_` separators). `"5.0"` and `"1e3"` are rejected. Store `str(int(value))`, so `"007"` is stored as `"7"`.
+- **Float values:** ASCII only, then anything Python's `float()` parses (surrounding whitespace, `_` separators and exponents included) except `nan`/`inf`. Store `str(float(value))`, so `"1e3"` and `" 1_000 "` are both stored as `"1000.0"`.
+- **Choice values:** strip surrounding whitespace, then match a choice exactly (case-sensitive) and store it. Choices themselves can't have leading or trailing whitespace, so a stripped value can always match.
+- **Error messages** show the value as the user typed it.
 - **Editing parameters:** when a parameter's type, range or choices change, re-check its `default_value` against them.
 
 ### Files and folders

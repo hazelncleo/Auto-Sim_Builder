@@ -68,14 +68,14 @@ def validate_description(description: str) -> None:
         raise ValueError("description contains non-printable characters")
 
 
-def validate_range(ptype: ParamType, lower_bound: float | None, upper_bound: float | None) -> None:
+def validate_parameter_range(parameter_type: ParamType, lower_bound: float | None, upper_bound: float | None) -> None:
     """Check range is valid for the given parameter dtype
 
     BOOL, CHOICE
     - cannot have bounds
 
     STR
-    - must either be not set or non-negative integers
+    - must be not set or non-negative integers
     - lower_bound must be smaller or equal to upper_bound
 
     INT
@@ -83,13 +83,13 @@ def validate_range(ptype: ParamType, lower_bound: float | None, upper_bound: flo
     - lower_bound must be smaller or equal to upper_bound
 
     FLOAT
-    - must be either not set or a finite value
+    - must be not set or a finite value
     - lower_bound must be smaller or equal to upper_bound
     """
-    match ptype:
+    match parameter_type:
         case ParamType.BOOL | ParamType.CHOICE:
             if (lower_bound is not None) or (upper_bound is not None):
-                raise ValueError(f"'{ptype}' cannot have bounds")
+                raise ValueError(f"'{parameter_type}' cannot have bounds")
 
         case ParamType.STR:
             if lower_bound is not None:
@@ -119,7 +119,120 @@ def validate_range(ptype: ParamType, lower_bound: float | None, upper_bound: flo
                 raise ValidationError(f"'{upper_bound}' is not a finite value", "upper")
 
         case _:
-            raise ValueError(f"'{ptype}' is not a valid parameter type")
+            raise ValueError(f"'{parameter_type}' is not a valid parameter type")
 
     if (lower_bound is not None) and (upper_bound is not None) and (lower_bound > upper_bound):
         raise ValidationError(f"'{lower_bound}' is greater than '{upper_bound}'", "upper")
+
+
+def clean_parameter_value(
+    parameter_type: ParamType,
+    value:          str,
+    lower_bound:    float | None,
+    upper_bound:    float | None,
+    choices:        set[str] | None
+    ) -> str:
+    """Check parameter value is valid and return a cleaned string
+
+    Raises ValidationError (field "value") if the value is invalid.
+    Returns the string to store: BOOL → "True"/"False", INT/FLOAT → str(int/float(value)),
+    CHOICE → the stripped value, STR → unchanged.
+
+    BOOL
+    - '1', '0', 'true' and 'false' are accepted
+    - leading and trailing spaces are stripped
+    - case is ignored
+
+    CHOICE
+    - the choice must be in the choices set
+    - leading and trailing spaces are stripped
+    - case-sensitive
+
+    STR
+    - can only contain ascii and non-control characters
+    - must have a length within bounds (inclusive)
+
+    INT
+    - must be ascii and a whole number
+    - surrounding whitespace and '_' separators are accepted
+    - must be within bounds (inclusive)
+
+    FLOAT
+    - must be ascii and parseable by float()
+    - surrounding whitespace and '_' separators are accepted
+    - must be finite
+    - must be within bounds (inclusive)
+    """
+    match parameter_type:
+        case ParamType.BOOL:
+            bool_value = value.strip().casefold()
+
+            if bool_value in ("true", "1"):
+                return "True"
+            elif bool_value in ("false", "0"):
+                return "False"
+            else:
+                raise ValidationError(f"'{value}' could not be converted to a boolean. '1', '0', 'true' or 'false' are accepted.", "value")
+
+        case ParamType.CHOICE:
+            if not choices:
+                raise ValueError("choice parameters require at least one choice")
+
+            choice_value = value.strip()
+
+            if choice_value not in choices:
+                raise ValidationError(f"'{value}' is not one of: {', '.join(sorted(choices))}", "value")
+
+            return choice_value
+
+        case ParamType.STR:
+            if (not value.isascii()) or (not value.isprintable()):
+                raise ValidationError(f"'{value}' contains non-ascii or control characters", "value")
+
+            elif (lower_bound is not None) and (len(value) < lower_bound):
+                raise ValidationError(f"'{value}' is shorter than minimum length '{int(lower_bound)}'", "value")
+
+            elif (upper_bound is not None) and (len(value) > upper_bound):
+                raise ValidationError(f"'{value}' is longer than maximum length '{int(upper_bound)}'", "value")
+
+            return value
+
+        case ParamType.INT:
+            if not value.isascii():
+                raise ValidationError(f"'{value}' contains non-ascii characters", "value")
+
+            try:
+                int_value = int(value)
+            except ValueError:
+                raise ValidationError(f"'{value}' is not a whole number", "value") from None
+
+            if (lower_bound is not None) and (int_value < lower_bound):
+                raise ValidationError(f"'{value}' is smaller than the lower bound of '{int(lower_bound)}'", "value")
+
+            elif (upper_bound is not None) and (int_value > upper_bound):
+                raise ValidationError(f"'{value}' is greater than the upper bound of '{int(upper_bound)}'", "value")
+
+            return str(int_value)
+
+        case ParamType.FLOAT:
+            if not value.isascii():
+                raise ValidationError(f"'{value}' contains non-ascii characters", "value")
+            
+            try:
+                float_value = float(value)
+            except ValueError:
+                raise ValidationError(f"'{value}' is not a number", "value") from None
+
+            if not isfinite(float_value):
+                raise ValidationError(f"'{value}' is not a finite value", "value")
+
+            elif (lower_bound is not None) and (float_value < lower_bound):
+                raise ValidationError(f"'{value}' is smaller than the lower bound of '{lower_bound}'", "value")
+
+            elif (upper_bound is not None) and (float_value > upper_bound):
+                raise ValidationError(f"'{value}' is greater than the upper bound of '{upper_bound}'", "value")
+
+            return str(float_value)
+
+        case _:
+            raise ValueError(f"'{parameter_type}' is not a valid parameter type")
