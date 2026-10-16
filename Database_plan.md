@@ -131,6 +131,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 ## Rules enforced in `core/`
 
 ### Creating
+- **Names** (objects and models, on create and rename): at most 99 characters, and unique **ignoring case**, so `Plate` and `plate` can't both exist (they'd be the same folder on Windows/macOS). The database only enforces the character rules and exact-case uniqueness.
 - **One transaction:** create each object together with its files, software and build files, and each model together with its geometries and values.
 - **Object completeness:** every object has at least one software and at least one build file.
 - **Software keys:** `software.key` must be a key from the catalogue in code.
