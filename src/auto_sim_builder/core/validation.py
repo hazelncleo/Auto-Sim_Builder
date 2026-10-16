@@ -236,3 +236,38 @@ def clean_parameter_value(
 
         case _:
             raise ValueError(f"'{parameter_type}' is not a valid parameter type")
+
+
+def clean_choice(choice: str, current_choices: set[str]) -> str:
+    """Checks a choice is valid and returns a cleaned string
+
+    Raises ValidationError (field "choice") if the choice is invalid.
+    returns the choice with leading and trailing whitespace stripped.
+
+    A new choice must be:
+    - a string with only ascii and no control characters
+    - once stripped, less than 100 characters
+    - must not match a current choice, case insensitive
+    
+    NOTE: empty strings are allowed
+    """
+
+    if not isinstance(choice, str):
+        raise ValueError(f"'{choice}' is not a string")
+
+    stripped_choice = choice.strip()
+
+    if len(stripped_choice) > 99:
+        raise ValidationError(f"'{choice}' is longer than 99 characters", "choice")
+
+    elif (not stripped_choice.isascii()) or (not stripped_choice.isprintable()):
+        raise ValidationError(f"'{choice}' contains non-ascii or control characters", "choice")
+
+    elif stripped_choice in current_choices:
+        raise ValidationError(f"'{choice}' is already a selectable choice", "choice")
+
+    clash = next((c for c in current_choices if c.casefold() == stripped_choice.casefold()), None)
+    if clash is not None:
+        raise ValidationError(f"'{choice}' only differs in case from '{clash}'", "choice")
+
+    return stripped_choice

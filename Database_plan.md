@@ -143,6 +143,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 - **Objects:** only `name` and `description` change. Kind, files, software and build files never change, and no files or software are added after creation. The one exception is "Verify OK", which may refresh a file's snapshot (`size_bytes`/`mtime_ns`/`sha256`).
 - **Parameters and choices:** they can be added, edited, cloned and deleted only while the object is **unused**, meaning it isn't any model's analysis or geometry. They lock again as soon as a model uses the object.
 - **Choices:** only `choice` parameters have choices. Delete a parameter's choices before changing its type away from `choice`.
+- **Adding a choice:** strip surrounding whitespace before storing. The empty string is allowed (the interface shows it as a placeholder such as `(empty)`). At most 99 characters, ASCII and printable only. Reject exact duplicates and choices that only differ in case from an existing one (`Steel` vs `steel`).
 - **Models:** only `name`, `description`, the build status and the values change. Geometries can't be added or removed after creation.
 - **Parameter values:** a value's parameter must belong to one of the model's objects. Only the `value` column is ever updated.
 
@@ -151,7 +152,7 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 - **Bool values:** accept `true`/`false` and `1`/`0`, ignoring case and surrounding whitespace (so `True`, `TRUE` and `" true "` work too). Always store the Python spellings `"True"`/`"False"`. These go into an Abaqus `*PARAMETER` block as they are, and become a Python `bool` in the `params` dict.
 - **Int values:** ASCII only, then anything Python's `int()` parses (surrounding whitespace, a sign, `_` separators). `"5.0"` and `"1e3"` are rejected. Store `str(int(value))`, so `"007"` is stored as `"7"`.
 - **Float values:** ASCII only, then anything Python's `float()` parses (surrounding whitespace, `_` separators and exponents included) except `nan`/`inf`. Store `str(float(value))`, so `"1e3"` and `" 1_000 "` are both stored as `"1000.0"`.
-- **Choice values:** strip surrounding whitespace, then match a choice exactly (case-sensitive) and store it. Choices themselves can't have leading or trailing whitespace, so a stripped value can always match.
+- **Choice values:** strip surrounding whitespace, then match a choice exactly (case-sensitive) and store it. Choices are stripped when added, so a stripped value can always match.
 - **Error messages** show the value as the user typed it.
 - **Editing parameters:** when a parameter's type, range or choices change, re-check its `default_value` against them.
 

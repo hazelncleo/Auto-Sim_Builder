@@ -28,6 +28,7 @@ from auto_sim_builder.core.validation import (
     validate_name,
     validate_parameter_range,
     clean_parameter_value,
+    clean_choice,
 )
 
 
@@ -383,4 +384,53 @@ def test_choice_value_message_lists_choices():
 def test_choice_without_choices_rejected(choices):
     with pytest.raises(ValueError, match="at least one choice") as error:
         clean_parameter_value(ParamType.CHOICE, "Steel", None, None, choices)
+    assert not isinstance(error.value, ValidationError)
+
+
+@pytest.mark.parametrize(
+    "choice, current, stored",
+    [
+        ("Steel", set(), "Steel"),
+        ("Aluminium", {"Steel"}, "Aluminium"),
+        (" Copper ", {"Steel"}, "Copper"),
+        ("\tBrass\n", set(), "Brass"),
+        ("Ti 6Al-4V", set(), "Ti 6Al-4V"),
+        ("", {"Steel"}, ""),
+        ("   ", set(), ""),
+        ("x" * 99, set(), "x" * 99),
+        (" " + "x" * 99 + " ", set(), "x" * 99),
+    ],
+    ids=["first", "second", "padded", "tab-newline", "inner-space", "empty", "blank",
+         "99-characters", "99-after-strip"],
+)
+def test_valid_choice_accepted(choice, current, stored):
+    assert clean_choice(choice, current) == stored
+
+
+@pytest.mark.parametrize(
+    "choice, current, message",
+    [
+        ("x" * 100, set(), "longer than 99"),
+        ("café", set(), "non-ascii or control"),
+        ("20°C", set(), "non-ascii or control"),
+        ("a\x00b", set(), "non-ascii or control"),
+        ("two\nlines", set(), "non-ascii or control"),
+        ("Steel", {"Steel"}, "already a selectable choice"),
+        (" Steel ", {"Steel"}, "already a selectable choice"),
+        ("", {""}, "already a selectable choice"),
+        ("steel", {"Steel"}, "only differs in case from 'Steel'"),
+        (" STEEL ", {"Steel", "Copper"}, "only differs in case from 'Steel'"),
+    ],
+    ids=["too-long", "accent", "degree", "nul", "inner-newline", "duplicate",
+         "padded-duplicate", "empty-duplicate", "case-clash", "padded-case-clash"],
+)
+def test_invalid_choice_rejected(choice, current, message):
+    with pytest.raises(ValidationError, match=message) as error:
+        clean_choice(choice, current)
+    assert error.value.field == "choice"
+
+
+def test_non_str_choice_rejected():
+    with pytest.raises(ValueError, match="not a string") as error:
+        clean_choice(None, set())
     assert not isinstance(error.value, ValidationError)
