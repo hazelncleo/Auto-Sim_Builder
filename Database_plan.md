@@ -130,6 +130,11 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 
 ## Rules enforced in `core/`
 
+### Input and specs
+- **Specs:** user input reaches `core/` as frozen, keyword-only dataclasses, e.g. `ParameterSpec` in `core/params.py` (name, type, default, min/max, description, choices as a tuple). A spec only ever holds clean data. Cloning reads existing rows back into specs to pre-fill the wizard.
+- **Parsing:** `core/` turns raw strings into specs, so the TUI and CLI share one set of rules. `parse_parameter(...)` takes the fields as typed plus the object's other parameter names, converts min/max, checks the name (format and clash), range and default, and returns a `ParameterSpec`. It raises `ValidationError` with the field to highlight, without touching the database. The wizard passes its pending names; an existing object passes `parameter_names(...)`. Choices are cleaned with `clean_choice` as they're added.
+- **Writing:** the core functions that write (`add_parameter`, `edit_parameter`, `create_object`, ...) take specs, re-check what depends on the database (name clashes, locks) and write in one transaction.
+
 ### Creating
 - **Names** (objects and models, on create and rename): at most 99 characters, and unique **ignoring case**, so `Plate` and `plate` can't both exist (they'd be the same folder on Windows/macOS). The database only enforces the character rules and exact-case uniqueness. Check the format first (`validate_name`, no database), then look for a clash with a case-insensitive query (`COLLATE NOCASE`, safe because names are ASCII-only), leaving out the object or model being renamed.
 - **One transaction:** create each object together with its files, software and build files, and each model together with its geometries and values.
