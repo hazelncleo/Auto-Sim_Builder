@@ -131,13 +131,13 @@ The database only checks the **shape** of the data: keys, foreign keys, `NOT NUL
 ## Rules enforced in `core/`
 
 ### Creating
-- **Names** (objects and models, on create and rename): at most 99 characters, and unique **ignoring case**, so `Plate` and `plate` can't both exist (they'd be the same folder on Windows/macOS). The database only enforces the character rules and exact-case uniqueness.
+- **Names** (objects and models, on create and rename): at most 99 characters, and unique **ignoring case**, so `Plate` and `plate` can't both exist (they'd be the same folder on Windows/macOS). The database only enforces the character rules and exact-case uniqueness. Check the format first (`validate_name`, no database), then look for a clash with a case-insensitive query (`COLLATE NOCASE`, safe because names are ASCII-only), leaving out the object or model being renamed.
 - **One transaction:** create each object together with its files, software and build files, and each model together with its geometries and values.
 - **Object completeness:** every object has at least one software and at least one build file.
 - **Software keys:** `software.key` must be a key from the catalogue in code.
 - **Build files:** a build file must be one of the same object's files, and its file type must be one its software accepts (Abaqus: `.py` or `.inp`). The build mode comes from the file type.
 - **Model objects:** `models.analysis_id` must be an `analysis` object, and every geometry link must point to a `geometry` object.
-- **Parameter names:** they become Python dict keys and Abaqus `*PARAMETER` names, so they must be identifiers: ASCII letters, digits and `_`, starting with a letter, at most 99 characters. Python 3 keywords and Python 2.7's `print`/`exec` are rejected. They're unique within an object, ignoring case.
+- **Parameter names:** they become Python dict keys and Abaqus `*PARAMETER` names, so they must be identifiers: ASCII letters, digits and `_`, starting with a letter, at most 99 characters. Python 3 keywords and Python 2.7's `print`/`exec` are rejected. They're unique within an object, ignoring case. `validate_parameter_name` takes the object's other parameter names (minus the one being edited) and checks for a clash after the format checks. While an object is being created, those names come from the wizard's pending list, because nothing is in the database yet. On an existing object, they're queried from the database. Creating an object also checks the whole batch for duplicates before inserting.
 - **Parameter name clashes:** parameter names must be unique across a model's analysis and geometries. Refuse to create the model otherwise.
 
 ### Locks

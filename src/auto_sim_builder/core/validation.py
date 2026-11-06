@@ -2,6 +2,7 @@ from string import ascii_letters, digits
 from auto_sim_builder.core.params import ParamType
 from math import isfinite
 from keyword import iskeyword
+from collections.abc import Iterable
 
 
 class ValidationError(ValueError):
@@ -17,24 +18,18 @@ ALLOWED_STARTING_CHARACTERS = set(ascii_letters + digits)
 ALLOWED_PARAMETER_CHARACTERS = set(ascii_letters + digits + '_')
 
 
-def validate_name(name: str, current_names: set[str]) -> None:
+def validate_name(name: str) -> None:
     """Check name matches the following criteria
 
     - Is a string
-    - Does not match any current object/model names
     - Less than 100 characters
     - Only contains digits, letters, underscores, hyphens and period.
     - Must start with a digit or letter
     - Must not be empty
-
-    NOTE: current_names should be casefolded
     """
 
     if not isinstance(name, str):
         raise ValueError(f"'{name}' is not a string")
-
-    elif name.casefold() in current_names:
-        raise ValidationError(f"'{name}' is already used", "name")
 
     elif len(name) >= 100:
         raise ValidationError(f"'{name}' is longer than 99 characters", "name")
@@ -67,7 +62,7 @@ def validate_description(description: str) -> None:
         raise ValidationError("description contains non-printable characters", "description")
 
 
-def validate_parameter_name(parameter_name: str, current_parameter_names: set[str]) -> None:
+def validate_parameter_name(parameter_name: str, current_parameter_names: Iterable[str]) -> None:
     """Check parameter name matches the following criteria
 
     - Is a string
@@ -77,15 +72,10 @@ def validate_parameter_name(parameter_name: str, current_parameter_names: set[st
     - Must start with an ascii letter
     - Cannot be a python keyword ('print' and 'exec' included)
     - Must not be empty
-
-    NOTE: current_parameter_names should be casefolded
     """
 
     if not isinstance(parameter_name, str):
         raise ValueError(f"'{parameter_name}' is not a string")
-
-    elif parameter_name.casefold() in current_parameter_names:
-        raise ValidationError(f"'{parameter_name}' is already used", "name")
 
     elif len(parameter_name) >= 100:
         raise ValidationError(f"'{parameter_name}' is longer than 99 characters", "name")
@@ -101,6 +91,9 @@ def validate_parameter_name(parameter_name: str, current_parameter_names: set[st
 
     elif parameter_name[0] not in ascii_letters:
         raise ValidationError(f"'{parameter_name}' contains restricted first character '{parameter_name[0]}'", "name")
+
+    elif parameter_name.casefold() in {n.casefold() for n in current_parameter_names}:
+        raise ValidationError(f"'{parameter_name}' is already used", "name")
 
 
 def validate_parameter_range(parameter_type: ParamType, lower_bound: float | None, upper_bound: float | None) -> None:

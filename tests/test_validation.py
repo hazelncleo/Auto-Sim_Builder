@@ -34,28 +34,27 @@ from auto_sim_builder.core.validation import (
 
 
 def test_valid_name_accepted():
-    validate_name("plate_v1.2-a", {"other"})
+    validate_name("plate_v1.2-a")
 
 
 def test_99_characters_accepted():
-    validate_name("x" * 99, set())
+    validate_name("x" * 99)
 
 
 @pytest.mark.parametrize(
-    "name, taken, message",
+    "name, message",
     [
-        (None, set(), "not a string"),
-        ("Plate", {"plate"}, "already used"),
-        ("x" * 100, set(), "longer than 99"),
-        ("", set(), "empty"),
-        ("has space", set(), "restricted characters"),
-        (".hidden", set(), "first character"),
+        (None, "not a string"),
+        ("x" * 100, "longer than 99"),
+        ("", "empty"),
+        ("has space", "restricted characters"),
+        (".hidden", "first character"),
     ],
-    ids=["not-str", "duplicate", "too-long", "empty", "bad-char", "bad-first-char"],
+    ids=["not-str", "too-long", "empty", "bad-char", "bad-first-char"],
 )
-def test_invalid_name_rejected(name, taken, message):
+def test_invalid_name_rejected(name, message):
     with pytest.raises(ValueError, match=message) as error:
-        validate_name(name, taken)
+        validate_name(name)
     if name is not None:
         assert isinstance(error.value, ValidationError) and error.value.field == "name"
 
@@ -465,6 +464,8 @@ def test_valid_parameter_name_accepted(name, taken):
     "name, taken, message",
     [
         ("Width", {"width"}, "already used"),
+        ("width", {"WIDTH"}, "already used"),
+        ("_Width", {"width"}, "first character '_'"),
         ("x" * 100, set(), "longer than 99"),
         ("", set(), "empty"),
         ("plate-width", set(), "restricted characters"),
@@ -480,7 +481,7 @@ def test_valid_parameter_name_accepted(name, taken):
         ("print", set(), "keyword"),
         ("exec", set(), "keyword"),
     ],
-    ids=["duplicate", "too-long", "empty", "hyphen", "period", "space", "non-ascii",
+    ids=["duplicate", "duplicate-uppercase-taken", "format-checked-first", "too-long", "empty", "hyphen", "period", "space", "non-ascii",
          "digit-first", "underscore-first", "class", "lambda", "True", "None",
          "py2-print", "py2-exec"],
 )
