@@ -108,7 +108,7 @@ def insert_parameter(
     object_id: int,
     parameter_data: ParameterSpec
 ) -> int:
-    """"""
+    """Insert a parameter and its choices, returning the new parameter's id."""
     
     cursor = connection.execute(
         """
@@ -142,7 +142,10 @@ def update_parameter(
     parameter_id: int,
     parameter_data: ParameterSpec
 ) -> bool:
-    """"""
+    """Overwrite a parameter and replace its choices with the spec's.
+
+    Returns False, without touching any choices, if the parameter doesn't exist.
+    """
 
     cursor = connection.execute(
         """
@@ -181,7 +184,7 @@ def delete_parameter(
     connection: sqlite3.Connection,
     parameter_id: int
 ) -> bool:
-    """"""
+    """Delete a parameter (its choices cascade). Returns False if it didn't exist."""
 
     cursor = connection.execute(
         "DELETE FROM object_parameters WHERE id = ?",
@@ -195,6 +198,7 @@ def list_parameters(
     connection: sqlite3.Connection,
     object_id: int
 ) -> list[tuple[int, ParameterSpec]]:
+    """Return (id, spec) pairs for an object's parameters, in creation order."""
     
     rows = connection.execute(
         """
@@ -227,7 +231,7 @@ def insert_choice(
     parameter_id: int,
     choice: str
 ) -> None:
-    """"""
+    """Add a choice to the end of a parameter's choices."""
 
     connection.execute(
         "INSERT INTO parameter_choices (parameter_id, value) VALUES (?, ?)",
@@ -240,7 +244,7 @@ def delete_choice(
     parameter_id: int,
     choice: str
 ) -> bool:
-    """"""
+    """Delete one choice (exact match). Returns False if it didn't exist."""
 
     cursor = connection.execute(
         "DELETE FROM parameter_choices WHERE parameter_id = ? AND value = ?",
@@ -254,7 +258,7 @@ def list_choices(
     connection: sqlite3.Connection,
     parameter_id: int
 ) -> tuple[str, ...]:
-    """"""
+    """Return a parameter's choices in the order they were added."""
     
     rows = connection.execute(
         "SELECT value FROM parameter_choices WHERE parameter_id = ? ORDER BY rowid",
