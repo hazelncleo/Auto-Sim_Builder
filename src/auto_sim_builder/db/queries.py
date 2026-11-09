@@ -1,6 +1,6 @@
 import sqlite3
 from typing import Literal
-from auto_sim_builder.core.specs import ObjectKind, ObjectSpec, ParameterSpec, ParamType
+from auto_sim_builder.core.specs import ObjectKind, ObjectSpec, ParameterSpec, ParamType, FileSpec
 
 
 _NAME_TABLES = {"object" : "objects", "model" : "models"}
@@ -157,16 +157,86 @@ def models_using_object(
     return [model[0] for model in rows]
 
 
-def insert_object_file():
-    pass
+def insert_object_file(
+    connection: sqlite3.Connection,
+    object_id: int,
+    file_data: FileSpec
+) -> int:
+    """Record a file copied into an object's folder, returning the new file's id."""
+
+    cursor = connection.execute(
+        """
+        INSERT INTO object_files
+        (object_id, rel_path, size_bytes, mtime_ns, sha256, imported_at)
+        VALUES (?,?,?,?,?,?)
+        """,
+        (
+            object_id,
+            file_data.rel_path,
+            file_data.size_bytes,
+            file_data.mtime_ns,
+            file_data.sha256,
+            file_data.imported_at
+        )
+    )
+
+    return cursor.lastrowid
 
 
-def list_object_files():
-    pass
+def list_object_files(
+    connection: sqlite3.Connection,
+    object_id: int
+) -> list[tuple[int, FileSpec]]:
+    """Return (id, spec) pairs for an object's files, sorted by path."""
+
+    rows = connection.execute(
+        """
+        SELECT id, rel_path, size_bytes, mtime_ns, sha256, imported_at
+        FROM object_files WHERE object_id = ? ORDER BY rel_path
+        """,
+        (object_id,)
+    ).fetchall()
+
+    files = []
+    for single_file in rows:
+
+        spec = FileSpec(
+            rel_path = single_file["rel_path"],
+            size_bytes = single_file["size_bytes"],
+            mtime_ns = single_file["mtime_ns"],
+            sha256 = single_file["sha256"],
+            imported_at = single_file["imported_at"]
+        )
+
+        files.append((single_file["id"], spec))
+
+    return files
 
 
-def update_file_snapshot():
-    pass
+def update_file_snapshot(
+    connection: sqlite3.Connection,
+    file_id: int,
+    size_bytes: int,
+    mtime_ns: int,
+    sha256: str
+) -> bool:
+    """Refresh a file's snapshot after "Verify OK". Returns False if it didn't exist."""
+
+    cursor = connection.execute(
+        """
+        UPDATE object_files
+        SET size_bytes = ?, mtime_ns = ?, sha256 = ?
+        WHERE id = ?
+        """,
+        (
+            size_bytes,
+            mtime_ns,
+            sha256,
+            file_id
+        )
+    )
+
+    return cursor.rowcount > 0
 
 
 def insert_software():

@@ -2,21 +2,24 @@ import sqlite3
 
 import pytest
 
-from auto_sim_builder.core.specs import ObjectKind, ObjectSpec, ParameterSpec, ParamType
+from auto_sim_builder.core.specs import FileSpec, ObjectKind, ObjectSpec, ParameterSpec, ParamType
 from auto_sim_builder.db.queries import (
     delete_choice,
     delete_object,
     delete_parameter,
     get_object,
     insert_object,
+    insert_object_file,
     insert_choice,
     insert_parameter,
     list_choices,
+    list_object_files,
     list_objects,
     list_parameters,
     models_using_object,
     name_exists,
     parameter_names,
+    update_file_snapshot,
     update_object,
     update_parameter,
 )
@@ -1065,3 +1068,220 @@ def test_models_using_object_empty_after_model_deleted(db):
     db.execute("DELETE FROM models WHERE id = ?", (model_id,))
     assert models_using_object(db, analysis_id) == []
     assert models_using_object(db, geometry_id) == []
+
+
+def file_spec(**changes):
+    fields = dict(
+        rel_path="plate.py",
+        size_bytes=1234,
+        mtime_ns=1_700_000_000_000_000_000,
+        sha256="a" * 64,
+        imported_at="2026-11-09T12:00:00",
+    )
+    return FileSpec(**(fields | changes))
+
+
+def get_file_rows(db, object_id):
+    return db.execute(
+        "SELECT * FROM object_files WHERE object_id = ? ORDER BY id", (object_id,)
+    ).fetchall()
+
+
+def test_insert_object_file_stores_all_fields(db):
+    object_id = add_object(db)
+    insert_object_file(db, object_id, file_spec())
+    [row] = get_file_rows(db, object_id)
+    assert row["rel_path"] == "plate.py"
+    assert row["size_bytes"] == 1234
+    assert row["mtime_ns"] == 1_700_000_000_000_000_000
+    assert row["sha256"] == "a" * 64
+    assert row["imported_at"] == "2026-11-09T12:00:00"
+
+
+def test_insert_object_file_returns_new_id(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec())
+    assert type(file_id) is int
+    assert get_file_rows(db, object_id)[0]["id"] == file_id
+
+
+def test_insert_object_file_returns_different_ids(db):
+    object_id = add_object(db)
+    first = insert_object_file(db, object_id, file_spec())
+    second = insert_object_file(db, object_id, file_spec(rel_path="mesh.inp"))
+    assert first != second
+
+
+def test_insert_object_file_nested_path_stored_as_given(db):
+    object_id = add_object(db)
+    insert_object_file(db, object_id, file_spec(rel_path="mesh/parts/plate.inp"))
+    assert get_file_rows(db, object_id)[0]["rel_path"] == "mesh/parts/plate.inp"
+
+
+def test_insert_object_file_empty_file(db):
+    object_id = add_object(db)
+    insert_object_file(db, object_id, file_spec(size_bytes=0))
+    assert get_file_rows(db, object_id)[0]["size_bytes"] == 0
+
+
+def test_insert_object_file_only_on_given_object(db):
+    plate_id = add_object(db, "plate")
+    beam_id = add_object(db, "beam")
+    insert_object_file(db, plate_id, file_spec())
+    assert len(get_file_rows(db, plate_id)) == 1
+    assert get_file_rows(db, beam_id) == []
+
+
+def test_insert_object_file_same_path_on_other_object_allowed(db):
+    plate_id = add_object(db, "plate")
+    beam_id = add_object(db, "beam")
+    insert_object_file(db, plate_id, file_spec())
+    insert_object_file(db, beam_id, file_spec())
+    assert get_file_rows(db, beam_id)[0]["rel_path"] == "plate.py"
+
+
+def test_insert_object_file_duplicate_path_rejected(db):
+    object_id = add_object(db)
+    insert_object_file(db, object_id, file_spec())
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_object_file(db, object_id, file_spec(sha256="b" * 64))
+
+
+def test_insert_object_file_unknown_object_rejected(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_object_file(db, 999, file_spec())
+
+
+def test_delete_object_deletes_its_files(db):
+    plate_id = add_object(db, "plate")
+    beam_id = add_object(db, "beam")
+    insert_object_file(db, plate_id, file_spec())
+    insert_object_file(db, beam_id, file_spec())
+    delete_object(db, plate_id)
+    assert get_file_rows(db, plate_id) == []
+    assert len(get_file_rows(db, beam_id)) == 1
+
+
+def test_list_object_files_empty_object(db):
+    assert list_object_files(db, add_object(db)) == []
+
+
+def test_list_object_files_unknown_object(db):
+    assert list_object_files(db, 999) == []
+
+
+def test_list_object_files_returns_id_spec_pairs(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec())
+    [(listed_id, spec)] = list_object_files(db, object_id)
+    assert listed_id == file_id
+    assert type(spec) is FileSpec
+
+
+def test_list_object_files_round_trips_spec(db):
+    object_id = add_object(db)
+    spec = file_spec(rel_path="mesh/plate.inp", size_bytes=0)
+    file_id = insert_object_file(db, object_id, spec)
+    assert list_object_files(db, object_id) == [(file_id, spec)]
+
+
+def test_list_object_files_only_from_given_object(db):
+    plate_id = add_object(db, "plate")
+    beam_id = add_object(db, "beam")
+    insert_object_file(db, plate_id, file_spec(rel_path="plate.py"))
+    insert_object_file(db, beam_id, file_spec(rel_path="beam.py"))
+    assert [spec.rel_path for _, spec in list_object_files(db, beam_id)] == ["beam.py"]
+    assert [spec.rel_path for _, spec in list_object_files(db, plate_id)] == ["plate.py"]
+
+
+def test_list_object_files_sorted_by_path(db):
+    object_id = add_object(db)
+    paths = ["plate.py", "mesh/part.inp", "build.py", "mesh/assembly.inp", "README.md"]
+    for path in paths:
+        insert_object_file(db, object_id, file_spec(rel_path=path))
+    assert [spec.rel_path for _, spec in list_object_files(db, object_id)] == sorted(paths)
+
+
+def test_list_object_files_ids_follow_their_paths(db):
+    object_id = add_object(db)
+    plate_id = insert_object_file(db, object_id, file_spec(rel_path="plate.py"))
+    build_id = insert_object_file(db, object_id, file_spec(rel_path="build.py"))
+    assert [(file_id, spec.rel_path) for file_id, spec in list_object_files(db, object_id)] == [
+        (build_id, "build.py"),
+        (plate_id, "plate.py"),
+    ]
+
+
+def test_list_object_files_after_object_deleted(db):
+    object_id = add_object(db)
+    insert_object_file(db, object_id, file_spec())
+    delete_object(db, object_id)
+    assert list_object_files(db, object_id) == []
+
+
+def test_update_file_snapshot_returns_true(db):
+    file_id = insert_object_file(db, add_object(db), file_spec())
+    assert update_file_snapshot(db, file_id, 99, 2, "b" * 64) is True
+
+
+def test_update_file_snapshot_changes_snapshot(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec())
+    update_file_snapshot(db, file_id, 4321, 1_800_000_000_000_000_000, "b" * 64)
+    [(_, spec)] = list_object_files(db, object_id)
+    assert spec.size_bytes == 4321
+    assert spec.mtime_ns == 1_800_000_000_000_000_000
+    assert spec.sha256 == "b" * 64
+
+
+def test_update_file_snapshot_keeps_path_and_import_time(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec(rel_path="mesh/plate.inp"))
+    update_file_snapshot(db, file_id, 4321, 2, "b" * 64)
+    [(listed_id, spec)] = list_object_files(db, object_id)
+    assert listed_id == file_id
+    assert spec.rel_path == "mesh/plate.inp"
+    assert spec.imported_at == "2026-11-09T12:00:00"
+
+
+def test_update_file_snapshot_to_empty_file(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec())
+    update_file_snapshot(db, file_id, 0, 2, "b" * 64)
+    assert list_object_files(db, object_id)[0][1].size_bytes == 0
+
+
+def test_update_file_snapshot_same_values_returns_true(db):
+    spec = file_spec()
+    file_id = insert_object_file(db, add_object(db), spec)
+    assert update_file_snapshot(db, file_id, spec.size_bytes, spec.mtime_ns, spec.sha256) is True
+
+
+def test_update_file_snapshot_only_that_file(db):
+    object_id = add_object(db)
+    plate_id = insert_object_file(db, object_id, file_spec(rel_path="plate.py"))
+    build_spec = file_spec(rel_path="build.py")
+    build_id = insert_object_file(db, object_id, build_spec)
+    update_file_snapshot(db, plate_id, 4321, 2, "b" * 64)
+    assert (build_id, build_spec) in list_object_files(db, object_id)
+
+
+def test_update_file_snapshot_leaves_other_objects(db):
+    plate_id = add_object(db, "plate")
+    beam_id = add_object(db, "beam")
+    file_id = insert_object_file(db, plate_id, file_spec())
+    beam_file = file_spec()
+    insert_object_file(db, beam_id, beam_file)
+    update_file_snapshot(db, file_id, 4321, 2, "b" * 64)
+    assert list_object_files(db, beam_id)[0][1] == beam_file
+
+
+def test_update_file_snapshot_unknown_returns_false(db):
+    assert update_file_snapshot(db, 999, 1, 1, "a" * 64) is False
+
+
+def test_update_file_snapshot_after_object_deleted_returns_false(db):
+    object_id = add_object(db)
+    file_id = insert_object_file(db, object_id, file_spec())
+    delete_object(db, object_id)
+    assert update_file_snapshot(db, file_id, 1, 1, "a" * 64) is False

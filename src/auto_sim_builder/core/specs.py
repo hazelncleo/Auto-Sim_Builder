@@ -40,3 +40,13 @@ class ObjectSpec:
     name:        str
     kind:        ObjectKind
     description: str = ""
+
+
+@dataclass(frozen = True, kw_only = True, slots = True)
+class FileSpec:
+    """A file's path and snapshot, used to spot edits. Ready for use in core."""
+    rel_path:    str   # relative to objects/<name>/, always with "/"
+    size_bytes:  int
+    mtime_ns:    int
+    sha256:      str
+    imported_at: str   # ISO 8601
