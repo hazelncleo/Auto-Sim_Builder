@@ -50,3 +50,9 @@ class FileSpec:
     mtime_ns:    int
     sha256:      str
     imported_at: str   # ISO 8601
+
+
+@dataclass(frozen = True, kw_only = True, slots = True)
+class SoftwareSpec:
+    key: str
+    command: str | None = None
