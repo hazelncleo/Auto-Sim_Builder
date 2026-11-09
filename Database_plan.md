@@ -44,7 +44,7 @@ CREATE TABLE objects (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE
                 CHECK (name GLOB '[A-Za-z0-9]*' AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
-    description TEXT,
+    description TEXT NOT NULL DEFAULT '',  -- '' = no description
     kind        TEXT NOT NULL CHECK (kind IN ('analysis', 'geometry'))
 ) STRICT;
 
@@ -76,7 +76,7 @@ CREATE TABLE object_parameters (
     default_value TEXT NOT NULL,          -- every parameter needs a default
     min_value     REAL,   -- int/float: lower bound; str: min length; NULL = unbounded
     max_value     REAL,   -- int/float: upper bound; str: max length; NULL = unbounded
-    description   TEXT,
+    description   TEXT NOT NULL DEFAULT '',  -- '' = no description
     UNIQUE (object_id, name),
     CHECK (min_value IS NULL OR max_value IS NULL OR min_value <= max_value),
     CHECK (type NOT IN ('bool', 'choice') OR (min_value IS NULL AND max_value IS NULL)),
@@ -99,7 +99,7 @@ CREATE TABLE models (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE
                 CHECK (name GLOB '[A-Za-z0-9]*' AND name NOT GLOB '*[^A-Za-z0-9_.-]*'),
-    description  TEXT,
+    description  TEXT NOT NULL DEFAULT '',  -- '' = no description
     analysis_id  INTEGER NOT NULL REFERENCES objects(id),
     build_status TEXT CHECK (build_status IN ('success', 'failed')),  -- NULL = not built yet
     built_at     TEXT,                    -- ISO 8601 timestamp of the last build
