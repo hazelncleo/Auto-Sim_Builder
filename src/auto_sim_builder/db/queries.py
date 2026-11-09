@@ -1,6 +1,6 @@
 import sqlite3
 from typing import Literal
-from auto_sim_builder.core.params import ParameterSpec, ParamType
+from auto_sim_builder.core.specs import ObjectKind, ObjectSpec, ParameterSpec, ParamType
 
 
 _NAME_TABLES = {"object" : "objects", "model" : "models"}
@@ -24,28 +24,137 @@ def name_exists(
     return row is not None
 
 
-def insert_object():
-    pass
+def insert_object(
+    connection: sqlite3.Connection,
+    object_data: ObjectSpec
+) -> int:
+    """Insert an object's own row, returning the new object's id."""
+
+    cursor = connection.execute(
+        """
+        INSERT INTO objects (name, description, kind)
+        VALUES (?,?,?)
+        """,
+        (
+            object_data.name,
+            object_data.description,
+            object_data.kind
+        )
+    )
+
+    return cursor.lastrowid
 
 
-def get_object():
-    pass
+def get_object(
+    connection: sqlite3.Connection,
+    object_id: int
+) -> tuple[int, ObjectSpec] | None:
+    """Return an object's (id, spec) pair, or None if it doesn't exist."""
+
+    row = connection.execute(
+        """
+        SELECT id, name, description, kind
+        FROM objects WHERE id = ?
+        """,
+        (object_id,)
+    ).fetchone()
+
+    if row is None:
+        return None
+
+    spec = ObjectSpec(
+        name = row["name"],
+        kind = ObjectKind(row["kind"]),
+        description = row["description"]
+    )
+
+    return (object_id, spec)
 
 
-def list_objects():
-    pass
+def list_objects(
+    connection: sqlite3.Connection
+) -> list[tuple[int, ObjectSpec]]:
+    """Return (id, spec) pairs for every object, sorted by name ignoring case."""
+
+    rows = connection.execute(
+        """
+        SELECT id, name, description, kind
+        FROM objects ORDER BY name COLLATE NOCASE
+        """
+    ).fetchall()
+
+    objects = []
+    for single_object in rows:
+
+        spec = ObjectSpec(
+            name        = single_object["name"],
+            description = single_object["description"],
+            kind        = ObjectKind(single_object["kind"])
+        )
+
+        objects.append((single_object["id"], spec))
+
+    return objects
 
 
-def update_object():
-    pass
+def update_object(
+    connection: sqlite3.Connection,
+    object_id: int,
+    name: str,
+    description: str
+) -> bool:
+    """Change an object's name and description. Returns False if it didn't exist."""
+
+    cursor = connection.execute(
+        """
+        UPDATE objects
+        SET name = ?, description = ?
+        WHERE id = ?
+        """,
+        (
+            name,
+            description,
+            object_id
+        )
+    )
+
+    return cursor.rowcount > 0
 
 
-def delete_object():
-    pass
+def delete_object(
+    connection: sqlite3.Connection,
+    object_id: int
+) -> bool:
+    """Delete an object (parameters and choices cascade). Returns False if it didn't exist.
+
+    Raises IntegrityError while any model uses it, check models_using_object first.
+    """
+
+    cursor = connection.execute(
+        "DELETE FROM objects WHERE id = ?",
+        (object_id,)
+    )
+    
+    return cursor.rowcount > 0
 
 
-def models_using_object():
-    pass
+def models_using_object(
+    connection: sqlite3.Connection,
+    object_id: int
+) -> list[int]:
+    """Return the ids of models using an object as their analysis or a geometry, sorted."""
+    
+    rows = connection.execute(
+        """
+        SELECT id FROM models WHERE analysis_id = ?
+        UNION
+        SELECT model_id FROM model_geometries WHERE geometry_id = ?
+        ORDER BY 1
+        """,
+        (object_id, object_id)
+    ).fetchall()
+
+    return [model[0] for model in rows]
 
 
 def insert_object_file():
@@ -113,7 +222,7 @@ def insert_parameter(
     cursor = connection.execute(
         """
         INSERT INTO object_parameters
-            (object_id, name, type, default_value, min_value, max_value, description)
+        (object_id, name, type, default_value, min_value, max_value, description)
         VALUES (?,?,?,?,?,?,?)
         """,
         (

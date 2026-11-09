@@ -21,7 +21,7 @@
 
 import pytest
 
-from auto_sim_builder.core.params import ParamType
+from auto_sim_builder.core.specs import ParamType
 from auto_sim_builder.core.validation import (
     ValidationError,
     validate_description,

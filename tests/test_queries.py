@@ -2,38 +2,47 @@ import sqlite3
 
 import pytest
 
-from auto_sim_builder.core.params import ParameterSpec, ParamType
+from auto_sim_builder.core.specs import ObjectKind, ObjectSpec, ParameterSpec, ParamType
 from auto_sim_builder.db.queries import (
     delete_choice,
+    delete_object,
     delete_parameter,
+    get_object,
+    insert_object,
     insert_choice,
     insert_parameter,
     list_choices,
+    list_objects,
     list_parameters,
+    models_using_object,
     name_exists,
     parameter_names,
+    update_object,
     update_parameter,
 )
 
 
 def add_object(db, name="obj", kind="analysis"):
-    return db.execute(
-        "INSERT INTO objects (name, kind) VALUES (?, ?)", (name, kind)
-    ).lastrowid
+    return insert_object(db, ObjectSpec(name=name, kind=ObjectKind(kind)))
 
 
 def add_parameter(db, object_id, name):
-    return db.execute(
-        "INSERT INTO object_parameters (object_id, name, type, default_value)"
-        " VALUES (?, ?, 'float', '1')",
-        (object_id, name),
-    ).lastrowid
+    return insert_parameter(
+        db, object_id, ParameterSpec(name=name, type=ParamType.FLOAT, default_value="1")
+    )
 
 
 def add_model(db, name, analysis_id):
     return db.execute(
         "INSERT INTO models (name, analysis_id) VALUES (?, ?)", (name, analysis_id)
     ).lastrowid
+
+
+def add_geometry(db, model_id, geometry_id):
+    db.execute(
+        "INSERT INTO model_geometries (model_id, geometry_id) VALUES (?, ?)",
+        (model_id, geometry_id),
+    )
 
 
 def test_name_exists_empty_database(db):
@@ -205,14 +214,6 @@ def test_insert_parameter_unknown_object_rejected(db):
         insert_parameter(db, 999, ParameterSpec(name="width", type=ParamType.FLOAT, default_value="1"))
 
 
-def get_choices(db, parameter_id):
-    rows = db.execute(
-        "SELECT value FROM parameter_choices WHERE parameter_id = ? ORDER BY rowid",
-        (parameter_id,),
-    ).fetchall()
-    return [row[0] for row in rows]
-
-
 def choice_spec(*choices, name="material"):
     return ParameterSpec(name=name, type=ParamType.CHOICE, default_value=choices[0], choices=choices)
 
@@ -233,25 +234,25 @@ def test_insert_parameter_returns_different_ids(db):
 
 def test_insert_parameter_stores_choices_in_order(db):
     parameter_id = insert_parameter(db, add_object(db), choice_spec("steel", "aluminium", "copper"))
-    assert get_choices(db, parameter_id) == ["steel", "aluminium", "copper"]
+    assert list_choices(db, parameter_id) == ("steel", "aluminium", "copper")
 
 
 def test_insert_parameter_without_choices_stores_none(db):
     parameter_id = insert_parameter(db, add_object(db), ParameterSpec(name="width", type=ParamType.FLOAT, default_value="1"))
-    assert get_choices(db, parameter_id) == []
+    assert list_choices(db, parameter_id) == ()
 
 
 def test_insert_parameter_choices_only_on_new_parameter(db):
     object_id = add_object(db)
     material_id = insert_parameter(db, object_id, choice_spec("steel", "copper"))
     finish_id = insert_parameter(db, object_id, choice_spec("matte", "gloss", name="finish"))
-    assert get_choices(db, material_id) == ["steel", "copper"]
-    assert get_choices(db, finish_id) == ["matte", "gloss"]
+    assert list_choices(db, material_id) == ("steel", "copper")
+    assert list_choices(db, finish_id) == ("matte", "gloss")
 
 
 def test_insert_parameter_empty_string_choice_allowed(db):
     parameter_id = insert_parameter(db, add_object(db), choice_spec("steel", ""))
-    assert get_choices(db, parameter_id) == ["steel", ""]
+    assert list_choices(db, parameter_id) == ("steel", "")
 
 
 def test_insert_parameter_duplicate_choice_rejected(db):
@@ -262,7 +263,7 @@ def test_insert_parameter_duplicate_choice_rejected(db):
 def test_insert_choice_appends(db):
     parameter_id = insert_parameter(db, add_object(db), choice_spec("steel"))
     insert_choice(db, parameter_id, "copper")
-    assert get_choices(db, parameter_id) == ["steel", "copper"]
+    assert list_choices(db, parameter_id) == ("steel", "copper")
 
 
 def test_insert_choice_same_value_on_other_parameter_allowed(db):
@@ -270,8 +271,8 @@ def test_insert_choice_same_value_on_other_parameter_allowed(db):
     material_id = insert_parameter(db, object_id, choice_spec("steel"))
     other_id = insert_parameter(db, object_id, choice_spec("copper", name="other"))
     insert_choice(db, other_id, "steel")
-    assert get_choices(db, material_id) == ["steel"]
-    assert get_choices(db, other_id) == ["copper", "steel"]
+    assert list_choices(db, material_id) == ("steel",)
+    assert list_choices(db, other_id) == ("copper", "steel")
 
 
 def test_insert_choice_duplicate_rejected(db):
@@ -287,8 +288,8 @@ def test_insert_choice_unknown_parameter_rejected(db):
 
 def test_deleting_parameter_deletes_choices(db):
     parameter_id = insert_parameter(db, add_object(db), choice_spec("steel", "copper"))
-    db.execute("DELETE FROM object_parameters WHERE id = ?", (parameter_id,))
-    assert get_choices(db, parameter_id) == []
+    delete_parameter(db, parameter_id)
+    assert list_choices(db, parameter_id) == ()
 
 
 def test_list_choices_returns_tuple_of_strings(db):
@@ -328,7 +329,7 @@ def test_list_choices_unknown_parameter_empty(db):
 
 def test_list_choices_after_parameter_deleted_empty(db):
     parameter_id = insert_parameter(db, add_object(db), choice_spec("steel"))
-    db.execute("DELETE FROM object_parameters WHERE id = ?", (parameter_id,))
+    delete_parameter(db, parameter_id)
     assert list_choices(db, parameter_id) == ()
 
 
@@ -658,3 +659,409 @@ def test_list_parameters_after_delete(db):
     height_id = insert_parameter(db, object_id, width_spec(name="height"))
     delete_parameter(db, width_id)
     assert [parameter_id for parameter_id, _ in list_parameters(db, object_id)] == [height_id]
+
+
+def get_object_row(db, name):
+    return db.execute("SELECT * FROM objects WHERE name = ?", (name,)).fetchone()
+
+
+def test_insert_object_stores_all_fields(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS, description="Flat plate"))
+    row = get_object_row(db, "plate")
+    assert row is not None
+    assert row["kind"] == "analysis"
+    assert row["description"] == "Flat plate"
+
+
+def test_insert_object_returns_new_id(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert type(object_id) is int
+    assert get_object_row(db, "plate")["id"] == object_id
+
+
+def test_insert_object_returns_different_ids(db):
+    first = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    second = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    assert first != second
+
+
+@pytest.mark.parametrize("kind", list(ObjectKind), ids=[k.value for k in ObjectKind])
+def test_insert_object_each_kind(db, kind):
+    insert_object(db, ObjectSpec(name="plate", kind=kind))
+    assert get_object_row(db, "plate")["kind"] == kind.value
+
+
+def test_insert_object_empty_description_stored_as_empty_string(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert get_object_row(db, "plate")["description"] == ""
+
+
+def test_insert_object_shows_in_name_exists(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert name_exists(db, "object", "Plate")
+
+
+def test_insert_object_can_hold_parameters(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_parameter(db, object_id, width_spec())
+    assert parameter_names(db, object_id) == ["width"]
+
+
+def test_insert_object_duplicate_name_rejected(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.GEOMETRY))
+
+
+@pytest.mark.parametrize("name", ["", "_plate", "my plate", "plate/1"], ids=["empty", "underscore-first", "space", "slash"])
+def test_insert_object_unsafe_name_rejected(db, name):
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_object(db, ObjectSpec(name=name, kind=ObjectKind.ANALYSIS))
+
+
+def test_list_objects_empty_database(db):
+    assert list_objects(db) == []
+
+
+def test_list_objects_returns_id_spec_pairs(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    [(listed_id, spec)] = list_objects(db)
+    assert listed_id == object_id
+    assert type(spec) is ObjectSpec
+
+
+def test_list_objects_round_trips_spec(db):
+    spec = ObjectSpec(name="plate", kind=ObjectKind.GEOMETRY, description="Flat plate")
+    insert_object(db, spec)
+    assert list_objects(db)[0][1] == spec
+
+
+@pytest.mark.parametrize("kind", list(ObjectKind), ids=[k.value for k in ObjectKind])
+def test_list_objects_kind_is_enum(db, kind):
+    insert_object(db, ObjectSpec(name="plate", kind=kind))
+    spec = list_objects(db)[0][1]
+    assert type(spec.kind) is ObjectKind
+    assert spec.kind is kind
+
+
+def test_list_objects_sorted_by_name(db):
+    for name in ["plate", "beam", "shell"]:
+        insert_object(db, ObjectSpec(name=name, kind=ObjectKind.ANALYSIS))
+    assert [spec.name for _, spec in list_objects(db)] == ["beam", "plate", "shell"]
+
+
+def test_list_objects_sorted_ignoring_case(db):
+    for name in ["plate", "Beam", "anchor", "Shell"]:
+        insert_object(db, ObjectSpec(name=name, kind=ObjectKind.ANALYSIS))
+    assert [spec.name for _, spec in list_objects(db)] == ["anchor", "Beam", "plate", "Shell"]
+
+
+def test_list_objects_ids_follow_their_names(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    beam_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    assert [(object_id, spec.name) for object_id, spec in list_objects(db)] == [
+        (beam_id, "beam"),
+        (plate_id, "plate"),
+    ]
+
+
+def test_list_objects_includes_both_kinds(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    assert {spec.kind for _, spec in list_objects(db)} == {ObjectKind.ANALYSIS, ObjectKind.GEOMETRY}
+
+
+def test_list_objects_after_delete(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    delete_object(db, plate_id)
+    assert [spec.name for _, spec in list_objects(db)] == ["beam"]
+
+
+def test_get_object_found(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    result = get_object(db, object_id)
+    assert result is not None
+    found_id, spec = result
+    assert found_id == object_id
+    assert type(spec) is ObjectSpec
+
+
+def test_get_object_round_trips_spec(db):
+    spec = ObjectSpec(name="plate", kind=ObjectKind.GEOMETRY, description="Flat plate")
+    object_id = insert_object(db, spec)
+    assert get_object(db, object_id) == (object_id, spec)
+
+
+@pytest.mark.parametrize("kind", list(ObjectKind), ids=[k.value for k in ObjectKind])
+def test_get_object_kind_is_enum(db, kind):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=kind))
+    spec = get_object(db, object_id)[1]
+    assert type(spec.kind) is ObjectKind
+    assert spec.kind is kind
+
+
+def test_get_object_picks_right_object(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    beam_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY, description="Beam"))
+    insert_object(db, ObjectSpec(name="shell", kind=ObjectKind.GEOMETRY))
+    assert get_object(db, beam_id) == (
+        beam_id,
+        ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY, description="Beam"),
+    )
+
+
+def test_get_object_matches_list_objects(db):
+    for name in ["plate", "beam"]:
+        insert_object(db, ObjectSpec(name=name, kind=ObjectKind.ANALYSIS))
+    for object_id, spec in list_objects(db):
+        assert get_object(db, object_id) == (object_id, spec)
+
+
+def test_get_object_empty_database(db):
+    assert get_object(db, 1) is None
+
+
+def test_get_object_unknown_id(db):
+    insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert get_object(db, 999) is None
+
+
+def test_get_object_after_delete(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    delete_object(db, object_id)
+    assert get_object(db, object_id) is None
+
+
+def test_delete_object_returns_true(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert delete_object(db, object_id) is True
+    assert get_object(db, object_id) is None
+
+
+def test_delete_object_only_that_object(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    delete_object(db, plate_id)
+    assert [spec.name for _, spec in list_objects(db)] == ["beam"]
+
+
+def test_delete_object_unknown_returns_false(db):
+    assert delete_object(db, 999) is False
+
+
+def test_delete_object_twice_second_returns_false(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert delete_object(db, object_id) is True
+    assert delete_object(db, object_id) is False
+
+
+def test_delete_object_frees_name(db):
+    spec = ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS)
+    delete_object(db, insert_object(db, spec))
+    assert not name_exists(db, "object", "plate")
+    insert_object(db, spec)
+    assert name_exists(db, "object", "plate")
+
+
+def test_delete_object_deletes_parameters_and_choices(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    material_id = insert_parameter(db, object_id, choice_spec("steel", "copper"))
+    insert_parameter(db, object_id, width_spec())
+    delete_object(db, object_id)
+    assert list_parameters(db, object_id) == []
+    assert list_choices(db, material_id) == ()
+
+
+def test_delete_object_leaves_other_parameters(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    beam_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    insert_parameter(db, plate_id, width_spec())
+    material_id = insert_parameter(db, beam_id, choice_spec("steel"))
+    delete_object(db, plate_id)
+    assert parameter_names(db, beam_id) == ["material"]
+    assert list_choices(db, material_id) == ("steel",)
+
+
+def test_delete_object_used_as_analysis_rejected(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    add_model(db, "run_1", object_id)
+    with pytest.raises(sqlite3.IntegrityError):
+        delete_object(db, object_id)
+    assert get_object(db, object_id) is not None
+
+
+def test_delete_object_used_as_geometry_rejected(db):
+    analysis_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    geometry_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    model_id = add_model(db, "run_1", analysis_id)
+    add_geometry(db, model_id, geometry_id)
+    with pytest.raises(sqlite3.IntegrityError):
+        delete_object(db, geometry_id)
+    assert get_object(db, geometry_id) is not None
+
+
+def test_delete_object_allowed_after_model_deleted(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    model_id = add_model(db, "run_1", object_id)
+    db.execute("DELETE FROM models WHERE id = ?", (model_id,))
+    assert delete_object(db, object_id) is True
+
+
+def test_update_object_returns_true(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert update_object(db, object_id, "plate", "New description") is True
+
+
+def test_update_object_renames(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    update_object(db, object_id, "panel", "")
+    assert get_object(db, object_id)[1].name == "panel"
+    assert not name_exists(db, "object", "plate")
+
+
+def test_update_object_changes_description(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    update_object(db, object_id, "plate", "Flat plate")
+    assert get_object(db, object_id)[1].description == "Flat plate"
+
+
+def test_update_object_clears_description(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS, description="old"))
+    update_object(db, object_id, "plate", "")
+    assert get_object_row(db, "plate")["description"] == ""
+
+
+@pytest.mark.parametrize("kind", list(ObjectKind), ids=[k.value for k in ObjectKind])
+def test_update_object_keeps_kind(db, kind):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=kind))
+    update_object(db, object_id, "panel", "Renamed")
+    assert get_object(db, object_id) == (
+        object_id,
+        ObjectSpec(name="panel", kind=kind, description="Renamed"),
+    )
+
+
+def test_update_object_only_that_object(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS, description="Plate"))
+    beam_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY, description="Beam"))
+    update_object(db, plate_id, "panel", "Panel")
+    assert get_object(db, beam_id) == (
+        beam_id,
+        ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY, description="Beam"),
+    )
+
+
+def test_update_object_keeps_parameters(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_parameter(db, object_id, choice_spec("steel", "copper"))
+    before = list_parameters(db, object_id)
+    update_object(db, object_id, "panel", "Renamed")
+    assert list_parameters(db, object_id) == before
+
+
+@pytest.mark.parametrize("name", ["plate", "Plate"], ids=["same", "case-only"])
+def test_update_object_same_name_allowed(db, name):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert update_object(db, object_id, name, "") is True
+    assert get_object(db, object_id)[1].name == name
+
+
+def test_update_object_name_clash_rejected(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    with pytest.raises(sqlite3.IntegrityError):
+        update_object(db, plate_id, "beam", "")
+
+
+@pytest.mark.parametrize("name", ["", "_plate", "my plate", "plate/1"], ids=["empty", "underscore-first", "space", "slash"])
+def test_update_object_unsafe_name_rejected(db, name):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    with pytest.raises(sqlite3.IntegrityError):
+        update_object(db, object_id, name, "")
+
+
+def test_update_object_unknown_returns_false(db):
+    assert update_object(db, 999, "plate", "") is False
+
+
+def test_models_using_object_unused(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    assert models_using_object(db, object_id) == []
+
+
+def test_models_using_object_unknown_object(db):
+    assert models_using_object(db, 999) == []
+
+
+def test_models_using_object_as_analysis(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    model_id = add_model(db, "run_1", object_id)
+    assert models_using_object(db, object_id) == [model_id]
+
+
+def test_models_using_object_as_geometry(db):
+    analysis_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    geometry_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    model_id = add_model(db, "run_1", analysis_id)
+    add_geometry(db, model_id, geometry_id)
+    assert models_using_object(db, geometry_id) == [model_id]
+
+
+def test_models_using_object_returns_ints(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    add_model(db, "run_1", object_id)
+    assert all(type(model_id) is int for model_id in models_using_object(db, object_id))
+
+
+def test_models_using_object_several_models_sorted(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    model_ids = [add_model(db, name, object_id) for name in ["run_3", "run_1", "run_2"]]
+    assert models_using_object(db, object_id) == sorted(model_ids)
+
+
+def test_models_using_object_analysis_and_geometry_combined(db):
+    analysis_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    geometry_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    first = add_model(db, "run_1", geometry_id)
+    second = add_model(db, "run_2", analysis_id)
+    add_geometry(db, second, geometry_id)
+    assert models_using_object(db, geometry_id) == [first, second]
+
+
+def test_models_using_object_no_duplicates(db):
+    object_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    model_id = add_model(db, "run_1", object_id)
+    add_geometry(db, model_id, object_id)
+    assert models_using_object(db, object_id) == [model_id]
+
+
+def test_models_using_object_only_given_object(db):
+    plate_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    shell_id = insert_object(db, ObjectSpec(name="shell", kind=ObjectKind.ANALYSIS))
+    beam_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    plate_model = add_model(db, "run_1", plate_id)
+    shell_model = add_model(db, "run_2", shell_id)
+    add_geometry(db, shell_model, beam_id)
+    assert models_using_object(db, plate_id) == [plate_model]
+    assert models_using_object(db, shell_id) == [shell_model]
+    assert models_using_object(db, beam_id) == [shell_model]
+
+
+def test_models_using_object_geometry_not_counted_for_analysis(db):
+    analysis_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    geometry_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    model_id = add_model(db, "run_1", analysis_id)
+    add_geometry(db, model_id, geometry_id)
+    assert models_using_object(db, analysis_id) == [model_id]
+    assert models_using_object(db, geometry_id) == [model_id]
+
+
+def test_models_using_object_empty_after_model_deleted(db):
+    analysis_id = insert_object(db, ObjectSpec(name="plate", kind=ObjectKind.ANALYSIS))
+    geometry_id = insert_object(db, ObjectSpec(name="beam", kind=ObjectKind.GEOMETRY))
+    model_id = add_model(db, "run_1", analysis_id)
+    add_geometry(db, model_id, geometry_id)
+    db.execute("DELETE FROM models WHERE id = ?", (model_id,))
+    assert models_using_object(db, analysis_id) == []
+    assert models_using_object(db, geometry_id) == []

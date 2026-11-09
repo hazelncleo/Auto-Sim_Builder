@@ -1,5 +1,5 @@
 from string import ascii_letters, digits
-from auto_sim_builder.core.params import ParamType
+from auto_sim_builder.core.specs import ParamType
 from math import isfinite
 from keyword import iskeyword
 from collections.abc import Iterable
